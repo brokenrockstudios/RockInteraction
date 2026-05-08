@@ -1,6 +1,6 @@
 # Rock Interaction
 
-A high-performance interaction framework plugin for Unreal Engine. Designed as a simple core for an interaction system.
+An efficient interaction framework plugin for Unreal Engine. Designed as a simple core for an interaction system.
 
 ## Overview
 RockInteraction provides a complete interaction pipeline driven by a component on the Pawn. It handles candidate detection, lookat scoring, focus selection, and option gathering.
