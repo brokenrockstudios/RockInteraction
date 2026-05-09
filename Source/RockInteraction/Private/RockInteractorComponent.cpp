@@ -170,7 +170,7 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	}
 
 	// Diff: exits first, then enters
-	for (const auto& Prev : PreviousCandidates)
+	for (const auto& Prev : Candidates)
 	{
 		if (!NewCandidates.Contains(Prev))
 		{
@@ -179,15 +179,13 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	}
 	for (const auto& Next : NewCandidates)
 	{
-		if (!PreviousCandidates.Contains(Next))
+		if (!Candidates.Contains(Next))
 		{
 			OnCandidateEntered(Next);
 		}
 	}
 
-	Swap(PreviousCandidates, Candidates);
 	Candidates = MoveTemp(NewCandidates);
-
 	// If candidates emptied, clear focus immediately rather than waiting for next score pass
 	if (Candidates.IsEmpty())
 	{

@@ -80,13 +80,12 @@ protected:
 	virtual void OnCandidatesUpdated(const TArray<TScriptInterface<IRockInteractableTarget>>& NewCandidates);
 
 	void ScoreAndSelectFocused();
+	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
+	virtual void ClearFocus();
 private:
 	// Returns view origin + direction from controller
 	bool GetViewPoint(FVector& OutOrigin, FVector& OutDirection) const;
-
-	void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
 	void OnFocusedTargetStateChanged();
-	void ClearFocus();
 
 	FTimerHandle ScanTimerHandle;
 
@@ -94,7 +93,6 @@ private:
 protected:
 	// If you consistently go over 10 candidate targets, consider switching to TSet instead?
 	TArray<TScriptInterface<IRockInteractableTarget>> Candidates;
-	TArray<TScriptInterface<IRockInteractableTarget>> PreviousCandidates;
 	TArray<TScriptInterface<IRockInteractableTarget>> PersistentCandidates;
 private:
 	// Result of scoring
