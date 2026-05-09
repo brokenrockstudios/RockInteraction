@@ -388,7 +388,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 
 #if ENABLE_DRAW_DEBUG
 	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();
-	if (!bShowPoints)
+	if (bShowPoints)
 	{
 		DrawDebugSphere(World, BestPoint.WorldLocation, 12.f, 8, FColor::White, false, 0.05f, 1, .25);
 	}
