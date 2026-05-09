@@ -106,6 +106,7 @@ public:
 	virtual FSimpleMulticastDelegate* GetInteractionStateChangedDelegate() { return nullptr; }
 	
 	/** Display name shown in the interaction UI. Override to provide a localized string. */
+	UFUNCTION(BlueprintCallable)
 	virtual FText GetInteractableDisplayName() const
 	{
 		return NSLOCTEXT("RockInteractableTarget", "DisplayName", "InteractableActor");

@@ -57,4 +57,6 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "General", meta = (BaseStruct = "/Script/RockInteraction.RockInteractionContextData"))
 	FInstancedStruct ContextData;
+
+	bool IsValid() const;
 };

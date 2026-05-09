@@ -7,6 +7,8 @@
 #include "StructUtils/InstancedStruct.h"
 #include "RockInteractionOption.generated.h"
 
+class UGameplayAbility;
+
 // Maybe just have something like
 // if (Component->GetOptionCount() == 1)
 // 	Component->TriggerInteraction(0); // instant
@@ -42,12 +44,17 @@ struct ROCKINTERACTION_API FRockInteractionOption
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTag OptionTag;
+
 	/** Primary display text for this option (e.g. "Open", "Pick Lock"). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FText Text;
-	/** Optional secondary display text (e.g. a hint or condition description). */
+
+	/** Optional secondary display text (e.g., a hint or condition description). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FText SubText;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	TSubclassOf<UGameplayAbility> InteractionAbility = nullptr;
 
 	// Game layer extension - ability spec handle, item requirements, etc.
 	UPROPERTY(EditDefaultsOnly, meta = (ExcludeBaseStruct, BaseStruct = "/Script/RockInteraction.RockInteractionOptionData", ShowOnlyInnerProperties))
