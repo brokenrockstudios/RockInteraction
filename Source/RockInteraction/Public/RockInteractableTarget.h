@@ -83,7 +83,7 @@ public:
 	 */
 	virtual void GatherInteractionOptions(const FRockInteractionContext& Context, FRockInteractionOptions& InteractionOptions) = 0;
 
-	// // On the target actor. Purely static, no context needed. 
+	// // On the target actor. Purely static, no context needed
 	// void AMyActor::GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const{ 
 	//	OutAbilities.Add(UGA_PullLever::StaticClass());
 	//	OutAbilities.Add(UGA_InspectObject::StaticClass());

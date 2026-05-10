@@ -82,6 +82,7 @@ protected:
 	void ScoreAndSelectFocused();
 	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
 	virtual void ClearFocus();
+
 private:
 	// Returns view origin + direction from controller
 	bool GetViewPoint(FVector& OutOrigin, FVector& OutDirection) const;
@@ -100,5 +101,5 @@ private:
 	FRockInteractionOptions CurrentOptions;
 	bool bHasFocus = false;
 
-	void DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct);
+	void DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct) const;
 };

@@ -183,7 +183,6 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	// The trade-off probably is around N=30 ish, but an occasion boop above is fine, but if we are hitting 50, its time to seriously consider.
 	UE_CLOG(Candidates.Num() > 48, LogRockInteraction, Warning, TEXT("Candidates exceed 48, consider TSet instead of TArray: %d"), Candidates.Num());
 
-
 	// If candidates emptied, clear focus immediately rather than waiting for next score pass
 	if (Candidates.IsEmpty())
 	{
@@ -238,14 +237,13 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	// If we've done a registered PersistentActor, we might want this to be something like 100m? 
 	const FVector TraceEnd = ViewOrigin + ViewDirection * ScanRange * 10;
 	World->LineTraceSingleByChannel(HitResult, ViewOrigin, TraceEnd, ScanChannel, TraceParams);
-	const AActor* hitActor = HitResult.GetActor();
-	const UPrimitiveComponent* hitComp = HitResult.GetComponent();
-
-	//DrawDebugLine(World, ViewOrigin, TraceEnd, HitResult.bBlockingHit ? FColor::Red : FColor::Green, false, 0.05f, 0);
+	const AActor* HitActor = HitResult.GetActor();
+	const UPrimitiveComponent* HitComp = HitResult.GetComponent();
+	int32 HitCandidateIndex = INDEX_NONE;
 
 	TScriptInterface<IRockInteractableTarget> BestTarget;
 	FRockInteractionPoint BestPoint;
-	float BestScore = -1.f;
+	float BestScore = -FLT_MAX;
 
 	FRockInteractionQuery Query;
 	Query.Instigator = GetOwner();
@@ -253,8 +251,21 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 
 	TArray<FRockInteractionPoint> OutPoints;
 
-	for (const TScriptInterface<IRockInteractableTarget>& Candidate : Candidates)
+	// Pass 1: identify the direct-hit candidate (cheap — just actor compare, no gather)
+	for (int32 i = 0; i < Candidates.Num(); ++i)
 	{
+		if (!Candidates[i]) continue;
+		if (Cast<AActor>(Candidates[i].GetObject()) == HitActor)
+		{
+			//HitCandidate = Candidates[i];
+			HitCandidateIndex = i;
+			break;
+		}
+	}
+
+	for (int32 i = 0; i < Candidates.Num(); ++i)
+	{
+		const TScriptInterface<IRockInteractableTarget>& Candidate = Candidates[i];
 		if (!Candidate)
 		{
 			continue;
@@ -269,7 +280,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
 
 		// --- Short circuit: direct hit on actor with 0 or 1 interaction points ---
-		if (hitActor == CandidateActor)
+		if (HitActor == CandidateActor)
 		{
 			int32 IXPointCount = 0;
 			const FRockInteractionPoint* FirstIXPoint = nullptr;
@@ -280,7 +291,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 				if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
 				++IXPointCount;
 				if (!FirstIXPoint) { FirstIXPoint = &Point; }
-				if (hitComp && Point.SourceComponent.Get() == hitComp)
+				if (HitComp && Point.SourceComponent.Get() == HitComp)
 				{
 					++ComponentMatchCount;
 					ComponentMatchPoint = &Point;
@@ -369,7 +380,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 
 	CurrentContext.Point = BestPoint;
 	CurrentContext.Query = Query;
-	if (hitActor == Cast<AActor>(BestTarget.GetObject()))
+	if (HitActor == Cast<AActor>(BestTarget.GetObject()))
 	{
 		CurrentContext.TraceHitResult = HitResult;
 	}
@@ -406,7 +417,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	}
 }
 
-void URockInteractorComponent::DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct)
+void URockInteractorComponent::DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct) const
 {
 #if ENABLE_DRAW_DEBUG
 	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();

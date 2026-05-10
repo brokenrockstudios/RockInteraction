@@ -44,25 +44,25 @@ struct ROCKINTERACTION_API FRockInteractionPoint
 	 * Valid at execution time for cases where sub-frame animation accuracy matters (e.g. lever tip on bone).
 	 * Not used during candidate selection.
 	 */
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	TWeakObjectPtr<USceneComponent> SourceComponent = nullptr;
 
 	/**
 	 * Socket name on SourceComponent. NAME_None means use the component's own origin.
 	 * Only meaningful if SourceComponent is valid.
 	 */
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	FName SocketName = NAME_None;
 
 	/** Multiplier applied to the instigator's LookAtThresholdDegrees for this point.
 	 *  1.0 = default threshold. 1.5 = 50% wider cone. */
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LookAtThresholdScale = 1.f;
 
 	/** Interaction points are selectable and committed on interact.
 	*  Visibility points act as a look-at scoring proxies and future visibility probes. They widen
 	*  the effective target area but are never surfaced as the active interaction point. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	ERockInteractionPointRole Role = ERockInteractionPointRole::Interaction;
 };
 
