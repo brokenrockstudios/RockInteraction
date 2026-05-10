@@ -4,6 +4,7 @@
 #include "RockInteractionLibrary.h"
 
 #include "GameplayTagsManager.h"
+#include "RockInteractionGameplayTags.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -12,8 +13,8 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 
-static const TCHAR* IX_Prefix = TEXT("IX_");
-static const TCHAR* IX_VP_Prefix = TEXT("IX_VP_");
+static const TCHAR* IX_Prefix = TEXT("IX");
+static const TCHAR* IX_VP_Prefix = TEXT("IX_VP");
 
 int32 URockInteractionLibrary::AppendPointsFromStaticMesh(TArray<FRockInteractionPoint>& OutPoints, UStaticMeshComponent* Mesh)
 {
@@ -33,11 +34,11 @@ int32 URockInteractionLibrary::AppendPointsFromStaticMesh(TArray<FRockInteractio
 		// Compose directly from socket relative transform. No per-name lookup
 		FRockInteractionPoint& Point = OutPoints.AddDefaulted_GetRef();
 		Point.WorldLocation = ComponentTransform.TransformPosition(Socket->RelativeLocation);
+		// The caller should populate/override this
+		Point.PointTag = RockInteractionGameplayTags::Interact_Verb_Activate;
 		Point.SourceComponent = Mesh;
 		Point.SocketName = Socket->SocketName;
 		Point.Role = SocketNameStr.StartsWith(IX_VP_Prefix) ? ERockInteractionPointRole::Visibility : ERockInteractionPointRole::Interaction;
-		// PointTag intentionally left empty
-		// The caller should populate and then use the RefreshPoints for further transform updates.
 		++AddedCount;
 	}
 
@@ -118,10 +119,11 @@ int32 URockInteractionLibrary::AppendPointsFromSkeletalMesh(TArray<FRockInteract
 		// GetBoneTransform is O(bone count) but unavoidable for skeletal. bone index
 		// lookup is the cheapest path available without caching the skeleton hierarchy
 		Point.WorldLocation = Socket->GetSocketLocation(Mesh);
+		// The caller should populate/override this
+		Point.PointTag = RockInteractionGameplayTags::Interact_Verb_Activate;
 		Point.SourceComponent = Mesh;
 		Point.SocketName = Socket->SocketName;
 		Point.Role = SocketNameStr.StartsWith(IX_VP_Prefix) ? ERockInteractionPointRole::Visibility : ERockInteractionPointRole::Interaction;
-		// PointTag intentionally left empty
 
 		++AddedCount;
 	}
@@ -215,10 +217,11 @@ int32 URockInteractionLibrary::AppendPointsFromTaggedComponents(TArray<FRockInte
 		}
 		FRockInteractionPoint& Point = OutPoints.AddDefaulted_GetRef();
 		Point.WorldLocation = Comp->GetComponentLocation();
+		// The caller should populate/override this
+		Point.PointTag = RockInteractionGameplayTags::Interact_Verb_Activate;
 		Point.SourceComponent = Comp;
 		Point.Role = MatchedTag.ToString().StartsWith(IX_VP_Prefix) ? ERockInteractionPointRole::Visibility : ERockInteractionPointRole::Interaction;
 		// SocketName stays NAME_None - component origin is the point
-		// PointTag intentionally left empty
 		++AddedCount;
 	}
 	return AddedCount;

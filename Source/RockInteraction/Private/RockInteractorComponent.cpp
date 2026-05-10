@@ -334,15 +334,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 				{
 					BestScore = Dot;
 					BestTarget = Candidate;
-					if (Point.Role == ERockInteractionPointRole::Interaction)
-					{
-						BestPoint = Point;
-					}
-					else if (BestPoint.Role == ERockInteractionPointRole::Visibility)
-					{
-						// No IX_ point has won yet. Use IV_ as a placeholder that will be resolved back to an IX post-loop
-						BestPoint = Point;
-					}
+					BestPoint = Point;
 				}
 			}
 		}
@@ -355,7 +347,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	}
 
 	// --- Resolve IV_ proxy to its owning IX_ point ---
-	if (BestPoint.Role == ERockInteractionPointRole::Visibility && BestPoint.PointTag.IsValid())
+	if (BestPoint.Role == ERockInteractionPointRole::Visibility)
 	{
 		// OutPoints still contains the last candidate's points. We need the winner's points
 		OutPoints.Reset();

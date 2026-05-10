@@ -22,7 +22,8 @@ UCLASS()
 class ROCKINTERACTION_API URockInteractionLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
-
+public:
+	
 	/**
 	 * Appends one FRockInteractionPoint per socket on a UStaticMeshComponent whose
 	 * name starts with SocketPrefix. Iterates UStaticMesh::Sockets directly. O(N).
