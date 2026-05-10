@@ -13,8 +13,8 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
 
-static const TCHAR* IX_Prefix = TEXT("IX");
-static const TCHAR* IX_VP_Prefix = TEXT("IX_VP");
+static const TCHAR* IX_Prefix = TEXT("IX_");
+static const TCHAR* IX_VP_Prefix = TEXT("IX_VP_");
 
 int32 URockInteractionLibrary::AppendPointsFromStaticMesh(TArray<FRockInteractionPoint>& OutPoints, UStaticMeshComponent* Mesh)
 {
