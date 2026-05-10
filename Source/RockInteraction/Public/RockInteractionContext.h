@@ -7,7 +7,6 @@
 #include "StructUtils/InstancedStruct.h"
 #include "RockInteractionContext.generated.h"
 
-class IRockInteractableInstigator;
 class IRockInteractableTarget;
 
 /**

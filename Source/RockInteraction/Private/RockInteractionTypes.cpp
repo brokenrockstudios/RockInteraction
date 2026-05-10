@@ -3,4 +3,9 @@
 
 #include "RockInteractionTypes.h"
 
-DEFINE_LOG_CATEGORY(LogRockInteraction);
+DEFINE_LOG_CATEGORY(LogRockInteraction)
+
+APawn* FRockInteractionQuery::GetInstigatorPawn() const
+{
+	return Cast<APawn>(Instigator.Get());
+};

@@ -8,8 +8,6 @@
 
 ROCKINTERACTION_API DECLARE_LOG_CATEGORY_EXTERN(LogRockInteraction, Display, All);
 
-class IRockInteractableInstigator;
-
 UENUM(BlueprintType)
 enum class ERockInteractionPointRole : uint8
 {
@@ -75,9 +73,10 @@ struct FRockInteractionQuery
 {
 	GENERATED_BODY()
 
-	// Who is asking
+	/** The actor performing the interaction. Typically, a Pawn, but kept as AActor
+	 *  to allow non-pawn instigators (automation systems, vehicles in some setups). */
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite)
-	TScriptInterface<IRockInteractableInstigator> Instigator;
+	TWeakObjectPtr<AActor> Instigator;
 
 	// Optional tags to gate/filter options on the target side
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -86,6 +85,8 @@ struct FRockInteractionQuery
 	// Game-specific query extensions (equipped item checks, faction state, etc.)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FInstancedStruct QueryData;
+
+	APawn* GetInstigatorPawn() const;
 };
 
 

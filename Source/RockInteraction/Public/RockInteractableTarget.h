@@ -47,7 +47,6 @@ class URockInteractableTarget : public UInterface
 class ROCKINTERACTION_API IRockInteractableTarget
 {
 	GENERATED_BODY()
-
 public:
 	/**
 	 * Populate OutPoints with this actor's current interaction points.
@@ -84,13 +83,18 @@ public:
 	 */
 	virtual void GatherInteractionOptions(const FRockInteractionContext& Context, FRockInteractionOptions& InteractionOptions) = 0;
 
-	// // On the target actor. Purely static, no context needed
+	// // On the target actor. Purely static, no context needed. 
 	// void AMyActor::GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const{ 
 	//	OutAbilities.Add(UGA_PullLever::StaticClass());
 	//	OutAbilities.Add(UGA_InspectObject::StaticClass());
 	// Due to potential race conditions of replicating an ability, we need to preemptively grant the instigator the abilities 	
-	virtual void GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const {}
-	
+	// NOTE: MUST be deterministic thru the lifetime of the actor. Do not 'change' what shows up in the list.
+	// If you need more conditional state, consider something like 'enter minigame' mode that then grants you appropriate functionality
+	// This is only meant for first 'interaction' type abilities only.
+	virtual void GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const
+	{
+	}
+
 	/**
 	 * Called when the player commits to an interaction on this actor.
 	 * Override to apply immediate state changes, trigger animations, etc.
@@ -99,12 +103,14 @@ public:
 	 *
 	 * @param Context	Interaction context
 	 */
-	virtual void OnInteractionBegin(const FRockInteractionContext& Context)	{ }
+	virtual void OnInteractionBegin(const FRockInteractionContext& Context)
+	{
+	}
 
 	// Optional: implement if this actor's interaction state can change while in proximity
 	// Broadcast whenever options would be different (locked, opened, out of ammo, etc.)
 	virtual FSimpleMulticastDelegate* GetInteractionStateChangedDelegate() { return nullptr; }
-	
+
 	/** Display name shown in the interaction UI. Override to provide a localized string. */
 	UFUNCTION(BlueprintCallable)
 	virtual FText GetInteractableDisplayName() const

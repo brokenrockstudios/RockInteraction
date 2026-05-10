@@ -183,47 +183,44 @@ bool URockInteractionLibrary::RefreshPointsFromSkeletalMesh(
 
 int32 URockInteractionLibrary::AppendPointsFromTaggedComponents(TArray<FRockInteractionPoint>& OutPoints, USceneComponent* Root, bool bRecursive)
 {
-	if (!Root)
-	{
-		return 0;
-	}
-
-
-	TArray<USceneComponent*> Candidates;
-	Root->GetChildrenComponents(bRecursive, Candidates);
+	if (!Root) { return 0; }
 
 	int32 AddedCount = 0;
 
-	for (USceneComponent* Comp : Candidates)
+	auto TryAddComponent = [&](USceneComponent* Comp) -> bool
 	{
-		if (!Comp)
-		{
-			continue;
-		}
+		if (!Comp) { return false; }
 
 		FName MatchedTag = NAME_None;
 		for (const FName& Tag : Comp->ComponentTags)
 		{
-			FString TagStr = Tag.ToString();
-			if (TagStr.StartsWith(IX_Prefix))
+			if (Tag.ToString().StartsWith(IX_Prefix))
 			{
 				MatchedTag = Tag;
 				break;
 			}
 		}
-		if (MatchedTag == NAME_None)
-		{
-			continue;
-		}
+		if (MatchedTag == NAME_None) { return false; }
+
 		FRockInteractionPoint& Point = OutPoints.AddDefaulted_GetRef();
 		Point.WorldLocation = Comp->GetComponentLocation();
-		// The caller should populate/override this
 		Point.PointTag = RockInteractionGameplayTags::Interact_Verb_Activate;
 		Point.SourceComponent = Comp;
-		Point.Role = MatchedTag.ToString().StartsWith(IX_VP_Prefix) ? ERockInteractionPointRole::Visibility : ERockInteractionPointRole::Interaction;
-		// SocketName stays NAME_None - component origin is the point
-		++AddedCount;
+		Point.Role = MatchedTag.ToString().StartsWith(IX_VP_Prefix)
+			? ERockInteractionPointRole::Visibility
+			: ERockInteractionPointRole::Interaction;
+		return true;
+	};
+
+	if (TryAddComponent(Root)) { ++AddedCount; }
+
+	TArray<USceneComponent*> Candidates;
+	Root->GetChildrenComponents(bRecursive, Candidates);
+	for (USceneComponent* Comp : Candidates)
+	{
+		if (TryAddComponent(Comp)) { ++AddedCount; }
 	}
+
 	return AddedCount;
 }
 
@@ -234,71 +231,57 @@ bool URockInteractionLibrary::RefreshPointsFromTaggedComponents(
 	int32 StartIndex,
 	int32 Count)
 {
-	if (!Root)
-	{
-		return false;
-	}
+	if (!Root) { return false; }
 
 	const int32 EndIndex = (Count == INDEX_NONE)
 		? InOutPoints.Num()
 		: FMath::Min(StartIndex + Count, InOutPoints.Num());
+	const int32 ExpectedCount = EndIndex - StartIndex;
+	if (ExpectedCount <= 0) { return true; }
+	
+	// Small-N: TMap allocates, but for N <= ~8 a TInlineAllocator-backed array
+	// and linear scan is faster. Pick based on your typical point count
+	// For now, TMap is fine and clearer
+	// e.g. TArray<TPair<USceneComponent*, int32>, TInlineAllocator<8>>
+	// auto Found = ComponentToPoint.FindByPredicate([Comp](const auto& P) { return P.Key == Comp; });
+	TMap<USceneComponent*, int32 /*PointIndex*/> ComponentToPoint;
+	ComponentToPoint.Reserve(ExpectedCount);
+
+	for (int32 i = StartIndex; i < EndIndex; ++i)
+	{
+		if (USceneComponent* Comp = InOutPoints[i].SourceComponent.Get())
+		{
+			ComponentToPoint.Add(Comp, i);
+		}
+	}
+	int32 RefreshedCount = 0;
+
+	auto TryRefreshComponent = [&](USceneComponent* Comp)
+	{
+		if (!Comp) { return; }
+		const int32* FoundIdx = ComponentToPoint.Find(Comp);
+		if (!FoundIdx) { return; }
+
+		InOutPoints[*FoundIdx].WorldLocation = Comp->GetComponentLocation();
+		++RefreshedCount;
+	};
+	
+	TryRefreshComponent(Root);
 
 	TArray<USceneComponent*> Candidates;
 	Root->GetChildrenComponents(bRecursive, Candidates);
-
-	int32 PointIndex = StartIndex;
-	int32 CandidateIndex = 0;
-
-	while (PointIndex < EndIndex && CandidateIndex < Candidates.Num())
+	for (USceneComponent* Comp : Candidates)
 	{
-		USceneComponent* Comp = Candidates[CandidateIndex];
-		if (!Comp)
-		{
-			++CandidateIndex;
-			continue;
-		}
-
-		// Check if this candidate has a matching tag
-		FName MatchedTag = NAME_None;
-		for (const FName& Tag : Comp->ComponentTags)
-		{
-			FString TagStr = Tag.ToString();
-			if (TagStr.StartsWith(IX_Prefix))
-			{
-				MatchedTag = Tag;
-				break;
-			}
-		}
-
-		if (MatchedTag == NAME_None)
-		{
-			// Component no longer has a matching tag - advance candidate only
-			++CandidateIndex;
-			continue;
-		}
-
-		if (Comp != InOutPoints[PointIndex].SourceComponent.Get())
-		{
-			// Component order mismatch - advance candidate only
-			++CandidateIndex;
-			continue;
-		}
-
-		// Match - refresh transform and advance both
-		InOutPoints[PointIndex].WorldLocation = Comp->GetComponentLocation();
-
-		++PointIndex;
-		++CandidateIndex;
+		TryRefreshComponent(Comp);
 	}
-
-	if (PointIndex != EndIndex)
+	
+	if (RefreshedCount != ExpectedCount)
 	{
-		UE_LOG(
-			LogRockInteraction, Warning,
-			TEXT("RefreshPointsFromTaggedComponents: mismatch on %s - expected to reach index %d, stopped at %d. Full re-gather needed."),
-			*GetNameSafe(Root), EndIndex, PointIndex);
+		UE_LOG(LogRockInteraction, Warning,
+			TEXT("RefreshPointsFromTaggedComponents: refreshed %d / %d on %s. Full re-gather needed."),
+			RefreshedCount, ExpectedCount, *GetNameSafe(Root));
 		return false;
 	}
-
+	
 	return true;
 }

@@ -85,13 +85,6 @@ void URockInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void URockInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	if (Candidates.IsEmpty())
-	{
-		ClearFocus();
-		return;
-	}
-
 	ScoreAndSelectFocused();
 }
 
@@ -186,6 +179,11 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	}
 
 	Candidates = MoveTemp(NewCandidates);
+
+	// The trade-off probably is around N=30 ish, but an occasion boop above is fine, but if we are hitting 50, its time to seriously consider.
+	UE_CLOG(Candidates.Num() > 48, LogRockInteraction, Warning, TEXT("Candidates exceed 48, consider TSet instead of TArray: %d"), Candidates.Num());
+
+
 	// If candidates emptied, clear focus immediately rather than waiting for next score pass
 	if (Candidates.IsEmpty())
 	{
@@ -240,6 +238,9 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	// If we've done a registered PersistentActor, we might want this to be something like 100m? 
 	const FVector TraceEnd = ViewOrigin + ViewDirection * ScanRange * 10;
 	World->LineTraceSingleByChannel(HitResult, ViewOrigin, TraceEnd, ScanChannel, TraceParams);
+	const AActor* hitActor = HitResult.GetActor();
+	const UPrimitiveComponent* hitComp = HitResult.GetComponent();
+
 	//DrawDebugLine(World, ViewOrigin, TraceEnd, HitResult.bBlockingHit ? FColor::Red : FColor::Green, false, 0.05f, 0);
 
 	TScriptInterface<IRockInteractableTarget> BestTarget;
@@ -247,6 +248,7 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	float BestScore = -1.f;
 
 	FRockInteractionQuery Query;
+	Query.Instigator = GetOwner();
 	// TODO: populate query tags from instigator state if needed
 
 	TArray<FRockInteractionPoint> OutPoints;
@@ -264,7 +266,6 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 		{
 			continue;
 		}
-		const AActor* hitActor = HitResult.GetActor();
 		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
 
 		// --- Short circuit: direct hit on actor with 0 or 1 interaction points ---
@@ -273,14 +274,13 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 			int32 IXPointCount = 0;
 			const FRockInteractionPoint* FirstIXPoint = nullptr;
 			const FRockInteractionPoint* ComponentMatchPoint = nullptr;
-			UPrimitiveComponent* HitComp = HitResult.GetComponent();
 			int32 ComponentMatchCount = 0;
 			for (const FRockInteractionPoint& Point : OutPoints)
 			{
 				if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
 				++IXPointCount;
 				if (!FirstIXPoint) { FirstIXPoint = &Point; }
-				if (HitComp && Point.SourceComponent.Get() == HitComp)
+				if (hitComp && Point.SourceComponent.Get() == hitComp)
 				{
 					++ComponentMatchCount;
 					ComponentMatchPoint = &Point;
@@ -369,9 +369,13 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 
 	CurrentContext.Point = BestPoint;
 	CurrentContext.Query = Query;
-	if (HitResult.GetActor() == Cast<AActor>(BestTarget.GetObject()))
+	if (hitActor == Cast<AActor>(BestTarget.GetObject()))
 	{
 		CurrentContext.TraceHitResult = HitResult;
+	}
+	else
+	{
+		CurrentContext.TraceHitResult = FHitResult();
 	}
 
 	bHasFocus = true;
