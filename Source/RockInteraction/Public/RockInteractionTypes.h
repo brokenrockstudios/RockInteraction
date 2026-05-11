@@ -126,3 +126,14 @@ struct ROCKINTERACTION_API FRockInteractionContextData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "General")
 	FGameplayTagContainer InteractionTags;
 };
+
+// Helper context internal usage for InteractorComponent
+struct FInteractionScanContext
+{
+	FVector ViewOrigin = FVector::ZeroVector;
+	FVector ViewDirection = FVector::ForwardVector;
+	AActor* HitActor = nullptr;
+	UPrimitiveComponent* HitComp = nullptr;
+	float LookAtThresholdCos = 0.f;
+	FHitResult HitResult;
+};

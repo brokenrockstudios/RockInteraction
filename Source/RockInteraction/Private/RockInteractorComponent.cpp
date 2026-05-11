@@ -18,7 +18,9 @@ static TAutoConsoleVariable<bool> CVarShowInteractionPoints(
 DECLARE_STATS_GROUP(TEXT("RockInteraction"), STATGROUP_RockInteraction, STATCAT_Advanced);
 
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_ScoreAndSelect"), STAT_RockInteraction_ScoreAndSelect, STATGROUP_RockInteraction);
-DECLARE_CYCLE_STAT(TEXT("RockInteraction_SphereScan"), STAT_RockInteraction_SphereScan, STATGROUP_RockInteraction);
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_ScanCallback"), STAT_RockInteraction_ScanCallback, STATGROUP_RockInteraction);
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_LineTrace"), STAT_RockInteraction_LineTrace, STATGROUP_RockInteraction);
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_GatherPoints"), STAT_RockInteraction_GatherPoints, STATGROUP_RockInteraction);
 
 // Sets default values for this component's properties
 URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
@@ -101,8 +103,6 @@ void URockInteractorComponent::StartSphereScan()
 // Sphere overlap at ScanRate (Default 20hz)
 void URockInteractorComponent::TickSphereScan()
 {
-	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_SphereScan);
-
 	AActor* Owner = GetOwner();
 	UWorld* World = GetWorld();
 	if (!Owner || !World)
@@ -132,7 +132,10 @@ void URockInteractorComponent::TickSphereScan()
 	}
 #endif
 
-	UpdateCandidates(OverlapResults);
+	{
+		SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScanCallback);
+		UpdateCandidates(OverlapResults);
+	}
 }
 
 // ----------------------------------------------------------------
@@ -215,140 +218,44 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScoreAndSelect);
 
-	FVector ViewOrigin, ViewDirection;
-	if (!GetViewPoint(ViewOrigin, ViewDirection))
+	FInteractionScanContext ScanCtx;
+	if (!GetViewPoint(ScanCtx.ViewOrigin, ScanCtx.ViewDirection))
 	{
 		ClearFocus();
 		return;
 	}
 
-	// --- Single line trace for short circuit ---
+	ScanCtx.LookAtThresholdCos = FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees));
+
 	AActor* Owner = GetOwner();
 	UWorld* World = GetWorld();
 
-	FHitResult HitResult;
 	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(RockInteractionInstigatorTrace), false);
 	TraceParams.AddIgnoredActor(Owner);
-
-	const float LookAtThresholdCos = FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees));
-
 	// Trace out to max range regardless of candidate distance; we just want to know what the player is looking at, and if it's one of our candidates then that wins outright
 	// Because the camera could be 'further back,' we need to make sure the ScanRange is at least far enough to make it past the sphere overlap or something quite far. 
 	// If we've done a registered PersistentActor, we might want this to be something like 100m? 
-	const FVector TraceEnd = ViewOrigin + ViewDirection * ScanRange * 10;
-	World->LineTraceSingleByChannel(HitResult, ViewOrigin, TraceEnd, ScanChannel, TraceParams);
-	const AActor* HitActor = HitResult.GetActor();
-	const UPrimitiveComponent* HitComp = HitResult.GetComponent();
-	int32 HitCandidateIndex = INDEX_NONE;
-
-	TScriptInterface<IRockInteractableTarget> BestTarget;
-	FRockInteractionPoint BestPoint;
-	float BestScore = -FLT_MAX;
-
-	FRockInteractionQuery Query;
-	Query.Instigator = GetOwner();
-	// TODO: populate query tags from instigator state if needed
-
-	TArray<FRockInteractionPoint> OutPoints;
-
-	// Pass 1: identify the direct-hit candidate (cheap — just actor compare, no gather)
-	for (int32 i = 0; i < Candidates.Num(); ++i)
 	{
-		if (!Candidates[i]) continue;
-		if (Cast<AActor>(Candidates[i].GetObject()) == HitActor)
-		{
-			//HitCandidate = Candidates[i];
-			HitCandidateIndex = i;
-			break;
-		}
+		const FVector TraceEnd = ScanCtx.ViewOrigin + ScanCtx.ViewDirection * ScanRange * 10;
+		SCOPE_CYCLE_COUNTER(STAT_RockInteraction_LineTrace);
+		World->LineTraceSingleByChannel(ScanCtx.HitResult, ScanCtx.ViewOrigin, TraceEnd, ScanChannel, TraceParams);
+		ScanCtx.HitActor = ScanCtx.HitResult.GetActor();
+		ScanCtx.HitComp = ScanCtx.HitResult.GetComponent();
 	}
 
-	for (int32 i = 0; i < Candidates.Num(); ++i)
+	// --- Build query ---
+	FRockInteractionQuery Query;
+	Query.Instigator = Owner;
+	// TODO: populate query tags from instigator state if needed
+
+	// --- Score ---
+	TScriptInterface<IRockInteractableTarget> BestTarget;
+	FRockInteractionPoint BestPoint;
+
+	// Try Direct Hit, otherwise fallback to LookAt
+	if (!TryResolveDirectHit(ScanCtx, Query, BestTarget, BestPoint))
 	{
-		const TScriptInterface<IRockInteractableTarget>& Candidate = Candidates[i];
-		if (!Candidate)
-		{
-			continue;
-		}
-
-		OutPoints.Reset();
-		const bool bInteractable = Candidate->GatherInteractionPoints(Query, OutPoints);
-		if (!bInteractable)
-		{
-			continue;
-		}
-		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
-
-		// --- Short circuit: direct hit on actor with 0 or 1 interaction points ---
-		if (HitActor == CandidateActor)
-		{
-			int32 IXPointCount = 0;
-			const FRockInteractionPoint* FirstIXPoint = nullptr;
-			const FRockInteractionPoint* ComponentMatchPoint = nullptr;
-			int32 ComponentMatchCount = 0;
-			for (const FRockInteractionPoint& Point : OutPoints)
-			{
-				if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
-				++IXPointCount;
-				if (!FirstIXPoint) { FirstIXPoint = &Point; }
-				if (HitComp && Point.SourceComponent.Get() == HitComp)
-				{
-					++ComponentMatchCount;
-					ComponentMatchPoint = &Point;
-				}
-			}
-			const bool bUniqueComponentMatch = ComponentMatchCount == 1 && ComponentMatchPoint;
-			// Single IX point or component match both resolve here
-			const FRockInteractionPoint* Resolved = bUniqueComponentMatch ? ComponentMatchPoint
-				: (IXPointCount <= 1) ? FirstIXPoint : nullptr;
-
-			if (Resolved || IXPointCount == 0)
-			{
-				BestTarget = Candidate;
-				BestPoint = Resolved ? *Resolved : FRockInteractionPoint();
-				BestScore = 2.f;
-				break;
-			}
-		}
-
-		// --- LookAt scoring ---
-		if (OutPoints.IsEmpty())
-		{
-			// Use actor origin as fallback point
-			if (!CandidateActor)
-			{
-				continue;
-			}
-			const FVector ToActor = (CandidateActor->GetActorLocation() - ViewOrigin).GetSafeNormal();
-			const float Dot = FVector::DotProduct(ViewDirection, ToActor);
-			if (Dot > LookAtThresholdCos && Dot > BestScore)
-			{
-				BestScore = Dot;
-				BestTarget = Candidate;
-				FRockInteractionPoint ActorPointFallback;
-				ActorPointFallback.WorldLocation = CandidateActor->GetActorLocation();
-				ActorPointFallback.SourceComponent = CandidateActor->GetRootComponent();
-				ActorPointFallback.Role = ERockInteractionPointRole::Interaction;
-				BestPoint = ActorPointFallback;
-			}
-		}
-		else
-		{
-			for (const FRockInteractionPoint& Point : OutPoints)
-			{
-				const FVector PointLocation = Point.WorldLocation;
-				const FVector ToPoint = (PointLocation - ViewOrigin).GetSafeNormal();
-				const float Dot = FVector::DotProduct(ViewDirection, ToPoint);
-				DrawInteractionPointDebug(World, PointLocation, Dot);
-				const float EffectiveThresholdCos = Point.LookAtThresholdScale == 1.f ? LookAtThresholdCos : FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees * Point.LookAtThresholdScale));
-				if (Dot > EffectiveThresholdCos && Dot > BestScore)
-				{
-					BestScore = Dot;
-					BestTarget = Candidate;
-					BestPoint = Point;
-				}
-			}
-		}
+		ScoreCandidatesByLookAt(ScanCtx, Query, BestTarget, BestPoint);
 	}
 
 	if (!BestTarget)
@@ -358,36 +265,14 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	}
 
 	// --- Resolve IV_ proxy to its owning IX_ point ---
-	if (BestPoint.Role == ERockInteractionPointRole::Visibility)
-	{
-		// OutPoints still contains the last candidate's points. We need the winner's points
-		OutPoints.Reset();
-		BestTarget->GatherInteractionPoints(Query, OutPoints);
+	ResolveVisibilityProxy(Query, BestTarget, BestPoint);
 
-		const FRockInteractionPoint* OwnerIX = OutPoints.FindByPredicate(
-			[&](const FRockInteractionPoint& P)
-			{
-				return P.Role == ERockInteractionPointRole::Interaction && P.PointTag == BestPoint.PointTag;
-			});
-		if (OwnerIX)
-		{
-			BestPoint = *OwnerIX;
-		}
-	}
-
-	// --- Dirty check: did focus target change? ---
+	// --- Dirty check & broadcast ---
 	const bool bTargetChanged = (CurrentContext.Target != BestTarget);
 
 	CurrentContext.Point = BestPoint;
 	CurrentContext.Query = Query;
-	if (HitActor == Cast<AActor>(BestTarget.GetObject()))
-	{
-		CurrentContext.TraceHitResult = HitResult;
-	}
-	else
-	{
-		CurrentContext.TraceHitResult = FHitResult();
-	}
+	CurrentContext.TraceHitResult = ScanCtx.HitResult;
 
 	bHasFocus = true;
 
@@ -401,19 +286,157 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 
 	if (bTargetChanged)
 	{
-		SetFocusedTarget(BestTarget); // handles unsub/sub of state change delegate
-		// Regather options for new target
+		SetFocusedTarget(BestTarget);
 		CurrentOptions.Reset();
 		BestTarget->GatherInteractionOptions(CurrentContext, CurrentOptions);
-
 		OnFocusChanged.Broadcast(CurrentContext);
 		OnOptionsChanged.Broadcast(CurrentOptions);
 	}
-	else
+}
+
+
+bool URockInteractorComponent::TryResolveDirectHit(
+	const FInteractionScanContext& ScanCtx,
+	const FRockInteractionQuery& Query,
+	TScriptInterface<IRockInteractableTarget>& OutTarget,
+	FRockInteractionPoint& OutPoint) const
+{
+	if (!ScanCtx.HitActor) { return false; }
+	if (!ScanCtx.HitActor->Implements<URockInteractableTarget>()) { return false; }
+
+	for (const auto& Candidate : Candidates)
 	{
-		// Same target - check if options changed via state delegate
-		// (options are refreshed when the target broadcasts GetInteractionStateChangedDelegate)
-		// No re-gather here by default; targets push changes via their delegate
+		if (!Candidate) { continue; }
+		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
+		if (CandidateActor != ScanCtx.HitActor) { continue; }
+
+		TArray<FRockInteractionPoint> Points;
+		{
+			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
+			if (!Candidate->GatherInteractionPoints(Query, Points))
+			{
+				return false; // Actor is hit but currently non-interactable; no fallback to LookAt
+			}
+		}
+
+		int32 IXPointCount = 0;
+		const FRockInteractionPoint* FirstIXPoint = nullptr;
+		const FRockInteractionPoint* ComponentMatchPoint = nullptr;
+		int32 ComponentMatchCount = 0;
+
+		for (const FRockInteractionPoint& Point : Points)
+		{
+			if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
+			++IXPointCount;
+			if (!FirstIXPoint) { FirstIXPoint = &Point; }
+			if (ScanCtx.HitComp && Point.SourceComponent.Get() == ScanCtx.HitComp)
+			{
+				++ComponentMatchCount;
+				ComponentMatchPoint = &Point;
+			}
+		}
+
+		const bool bUniqueComponentMatch = (ComponentMatchCount == 1);
+		const FRockInteractionPoint* Resolved = bUniqueComponentMatch ? ComponentMatchPoint
+			: (IXPointCount <= 1) ? FirstIXPoint
+			: nullptr; // ambiguous: 2+ IX on same component
+
+		if (Resolved || IXPointCount == 0)
+		{
+			OutTarget = Candidate;
+			OutPoint = Resolved ? *Resolved : FRockInteractionPoint();
+			return true;
+		}
+
+		// Ambiguous: fall through to LookAt, but we already found the candidate so stop searching
+		return false;
+	}
+
+	// HitActor not in candidates
+	return false;
+}
+
+bool URockInteractorComponent::ScoreCandidatesByLookAt(
+	const FInteractionScanContext& ScanCtx,
+	const FRockInteractionQuery& Query,
+	TScriptInterface<IRockInteractableTarget>& OutTarget,
+	FRockInteractionPoint& OutPoint) const
+{
+	float BestScore = -FLT_MAX;
+	TArray<FRockInteractionPoint> Points;
+
+	for (const auto& Candidate : Candidates)
+	{
+		if (!Candidate) { continue; }
+		if (Candidate->RequiresDirectHit()) { continue; }
+
+		Points.Reset();
+		{
+			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
+			if (!Candidate->GatherInteractionPoints(Query, Points)) { continue; }
+		}
+
+		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
+
+		if (Points.IsEmpty())
+		{
+			if (!CandidateActor) { continue; }
+			const FVector ToActor = (CandidateActor->GetActorLocation() - ScanCtx.ViewOrigin).GetSafeNormal();
+			const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToActor);
+			if (Dot > ScanCtx.LookAtThresholdCos && Dot > BestScore)
+			{
+				BestScore = Dot;
+				OutTarget = Candidate;
+				FRockInteractionPoint Fallback;
+				Fallback.WorldLocation = CandidateActor->GetActorLocation();
+				Fallback.SourceComponent = CandidateActor->GetRootComponent();
+				Fallback.Role = ERockInteractionPointRole::Interaction;
+				OutPoint = Fallback;
+			}
+		}
+		else
+		{
+			for (const FRockInteractionPoint& Point : Points)
+			{
+				const FVector ToPoint = (Point.WorldLocation - ScanCtx.ViewOrigin).GetSafeNormal();
+				const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToPoint);
+				DrawInteractionPointDebug(GetWorld(), Point.WorldLocation, Dot);
+				const float EffectiveThresholdCos = Point.LookAtThresholdScale == 1.f
+					? ScanCtx.LookAtThresholdCos
+					: FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees * Point.LookAtThresholdScale));
+				if (Dot > EffectiveThresholdCos && Dot > BestScore)
+				{
+					BestScore = Dot;
+					OutTarget = Candidate;
+					OutPoint = Point;
+				}
+			}
+		}
+	}
+
+	return OutTarget.GetObject() != nullptr;
+}
+
+void URockInteractorComponent::ResolveVisibilityProxy(
+	const FRockInteractionQuery& Query,
+	TScriptInterface<IRockInteractableTarget>& Target, FRockInteractionPoint& InOutPoint) const
+{
+	if (InOutPoint.Role == ERockInteractionPointRole::Visibility)
+	{
+		TArray<FRockInteractionPoint> OutPoints;
+		{
+			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
+			Target->GatherInteractionPoints(Query, OutPoints);
+		}
+		const FRockInteractionPoint* OwnerIX = OutPoints.FindByPredicate(
+			[&](const FRockInteractionPoint& P)
+			{
+				return P.Role == ERockInteractionPointRole::Interaction && P.PointTag == InOutPoint.PointTag;
+			});
+		if (OwnerIX)
+		{
+			InOutPoint = *OwnerIX;
+		}
 	}
 }
 

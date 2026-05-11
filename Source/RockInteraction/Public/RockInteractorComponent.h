@@ -80,9 +80,13 @@ protected:
 	virtual void OnCandidatesUpdated(const TArray<TScriptInterface<IRockInteractableTarget>>& NewCandidates);
 
 	void ScoreAndSelectFocused();
+
+	bool TryResolveDirectHit(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
+	bool ScoreCandidatesByLookAt(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
+	void ResolveVisibilityProxy(const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& Target, FRockInteractionPoint& InOutPoint) const;
+
 	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
 	virtual void ClearFocus();
-
 private:
 	// Returns view origin + direction from controller
 	bool GetViewPoint(FVector& OutOrigin, FVector& OutDirection) const;
@@ -90,8 +94,8 @@ private:
 
 	FTimerHandle ScanTimerHandle;
 
-	// Candidate list from sphere overlap
 protected:
+	// Candidate list from sphere overlap
 	// If you consistently go over 10 candidate targets, consider switching to TSet instead?
 	TArray<TScriptInterface<IRockInteractableTarget>> Candidates;
 	TArray<TScriptInterface<IRockInteractableTarget>> PersistentCandidates;

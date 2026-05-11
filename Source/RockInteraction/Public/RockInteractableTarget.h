@@ -94,6 +94,24 @@ public:
 	virtual void GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const
 	{
 	}
+	
+	/**
+	 * Whether this actor requires a direct line-trace hit to become focused.
+	 *
+	 * When true, LookAt scoring is skipped entirely — this actor can only be
+	 * selected if the player's crosshair trace hits it directly. Useful for
+	 * large interactables (doors, panels) where LookAt would win trivially
+	 * anyway, or where you want precise per-component IX point disambiguation.
+	 *
+	 * Multiple IX points are still supported provided each is bound to a
+	 * distinct source component; component-match resolution handles them cleanly.
+	 *
+	 * Returning true is also a minor per-frame performance optimization, as LookAt
+	 * scoring (including GatherInteractionPoints) is skipped for this actor entirely.
+	 *
+	 * Default is false. Standard LookAt scoring applies.
+	 */
+	virtual bool RequiresDirectHit() const { return false; }
 
 	/**
 	 * Called when the player commits to an interaction on this actor.
