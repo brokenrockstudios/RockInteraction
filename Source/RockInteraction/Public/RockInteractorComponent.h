@@ -28,17 +28,14 @@ public:
 
 	// --- Delegates ---
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFocusChanged, const FRockInteractionContext&, Context);
-
 	UPROPERTY(BlueprintAssignable)
 	FOnFocusChanged OnFocusChanged;
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFocusOptionsChanged, const FRockInteractionOptions&, Options);
-
 	UPROPERTY(BlueprintAssignable)
 	FOnFocusOptionsChanged OnOptionsChanged;
 
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnInteractionTriggered, const FRockInteractionContext&, Context, const FRockInteractionOption&, Option);
-
 	UPROPERTY(BlueprintAssignable)
 	FOnInteractionTriggered OnInteractionTriggered;
 
@@ -70,30 +67,26 @@ public:
 protected:
 	URockInteractorComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-
 	void StartSphereScan();
 	void TickSphereScan();
+
+	void OnScanComplete(const FTraceHandle& Handle, FOverlapDatum& Datum);
 	void UpdateCandidates(TArray<FOverlapResult>& Overlaps);
 
 	virtual void OnCandidateEntered(const TScriptInterface<IRockInteractableTarget>& Target);
 	virtual void OnCandidateExited(const TScriptInterface<IRockInteractableTarget>& Target);
 	virtual void OnCandidatesUpdated(const TArray<TScriptInterface<IRockInteractableTarget>>& NewCandidates);
+	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
+	virtual void ClearFocus();
 
 	void ScoreAndSelectFocused();
-
 	bool TryResolveDirectHit(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
 	bool ScoreCandidatesByLookAt(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
 	void ResolveVisibilityProxy(const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& Target, FRockInteractionPoint& InOutPoint) const;
-
-	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
-	virtual void ClearFocus();
 private:
 	// Returns view origin + direction from controller
 	bool GetViewPoint(FVector& OutOrigin, FVector& OutDirection) const;
 	void OnFocusedTargetStateChanged();
-
-	FTimerHandle ScanTimerHandle;
-
 protected:
 	// Candidate list from sphere overlap
 	// If you consistently go over 10 candidate targets, consider switching to TSet instead?
@@ -104,6 +97,9 @@ private:
 	FRockInteractionContext CurrentContext;
 	FRockInteractionOptions CurrentOptions;
 	bool bHasFocus = false;
+	FTimerHandle ScanTimerHandle;
+	FTraceHandle PendingSphereScanHandle;
+	FOverlapDelegate SphereScanDelegate;
 
 	void DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct) const;
 };

@@ -18,7 +18,7 @@ static TAutoConsoleVariable<bool> CVarShowInteractionPoints(
 DECLARE_STATS_GROUP(TEXT("RockInteraction"), STATGROUP_RockInteraction, STATCAT_Advanced);
 
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_ScoreAndSelect"), STAT_RockInteraction_ScoreAndSelect, STATGROUP_RockInteraction);
-DECLARE_CYCLE_STAT(TEXT("RockInteraction_ScanCallback"), STAT_RockInteraction_ScanCallback, STATGROUP_RockInteraction);
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_UpdateCandidates"), STAT_RockInteraction_UpdateCandidates, STATGROUP_RockInteraction);
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_LineTrace"), STAT_RockInteraction_LineTrace, STATGROUP_RockInteraction);
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_GatherPoints"), STAT_RockInteraction_GatherPoints, STATGROUP_RockInteraction);
 
@@ -74,6 +74,7 @@ void URockInteractorComponent::RemovePersistentCandidate(const TScriptInterface<
 
 void URockInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	SphereScanDelegate.Unbind();
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ScanTimerHandle);
@@ -88,6 +89,20 @@ void URockInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	ScoreAndSelectFocused();
+
+#if ENABLE_DRAW_DEBUG
+	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();
+	if (bShowPoints)
+	{
+		AActor* Owner = GetOwner();
+		UWorld* World = GetWorld();
+		DrawDebugSphere(World, Owner->GetActorLocation(), ScanRange, 12, Candidates.Num() > 0 ? FColor::Green : FColor::Cyan, false, 0);
+		if (bHasFocus)
+		{
+			DrawDebugSphere(World, CurrentContext.Point.WorldLocation, 12.f, 8, FColor::White, false, 0, 1, .25);
+		}
+	}
+#endif
 }
 
 void URockInteractorComponent::StartSphereScan()
@@ -96,6 +111,7 @@ void URockInteractorComponent::StartSphereScan()
 	if (!Pawn) { return; }
 	UWorld* World = GetWorld();
 	if (!ensure(World)) { return; }
+	SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
 	World->GetTimerManager().SetTimer(ScanTimerHandle, this, &ThisClass::TickSphereScan, ScanRate, /* bLoop= */ true);
 }
 
@@ -105,43 +121,39 @@ void URockInteractorComponent::TickSphereScan()
 {
 	AActor* Owner = GetOwner();
 	UWorld* World = GetWorld();
-	if (!Owner || !World)
-	{
-		return;
-	}
+	if (!Owner || !World) { return; }
+
+	// If a scan is still in flight, you can either skip or force-fetch it here
+	if (World->IsTraceHandleValid(PendingSphereScanHandle, true)) { return; }
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(RockInteractionInstigatorScan), /* bTraceComplex= */ false);
 	Params.AddIgnoredActor(Owner);
 
-	// TODO: Move to AsyncOverlap
-
-	TArray<FOverlapResult> OverlapResults;
-	World->OverlapMultiByChannel(
-		OverlapResults,
+	PendingSphereScanHandle = World->AsyncOverlapByChannel(
 		Owner->GetActorLocation(),
 		FQuat::Identity,
 		ScanChannel,
 		FCollisionShape::MakeSphere(ScanRange),
-		Params);
-
-#if ENABLE_DRAW_DEBUG
-	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();
-	if (bShowPoints)
-	{
-		DrawDebugSphere(World, Owner->GetActorLocation(), ScanRange, 12, OverlapResults.Num() > 0 ? FColor::Green : FColor::Cyan, false, ScanRate);
-	}
-#endif
-
-	{
-		SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScanCallback);
-		UpdateCandidates(OverlapResults);
-	}
+		Params,
+		FCollisionResponseParams::DefaultResponseParam,
+		&SphereScanDelegate); // delegate fires when done
 }
+
+void URockInteractorComponent::OnScanComplete(const FTraceHandle& Handle, FOverlapDatum& Datum)
+{
+	// stale result, discard
+	if (Handle != PendingSphereScanHandle) { return; }
+
+	UpdateCandidates(Datum.OutOverlaps);
+}
+
 
 // ----------------------------------------------------------------
 
 void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps)
 {
+	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_UpdateCandidates);
+
 	TArray<TScriptInterface<IRockInteractableTarget>> NewCandidates;
 
 	// Inject persistent candidates. Always relevant regardless of overlap
@@ -234,10 +246,11 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	TraceParams.AddIgnoredActor(Owner);
 	// Trace out to max range regardless of candidate distance; we just want to know what the player is looking at, and if it's one of our candidates then that wins outright
 	// Because the camera could be 'further back,' we need to make sure the ScanRange is at least far enough to make it past the sphere overlap or something quite far. 
-	// If we've done a registered PersistentActor, we might want this to be something like 100m? 
+	// If we've done a registered PersistentActor, we might want this to be something like 20m? 
 	{
-		const FVector TraceEnd = ScanCtx.ViewOrigin + ScanCtx.ViewDirection * ScanRange * 10;
 		SCOPE_CYCLE_COUNTER(STAT_RockInteraction_LineTrace);
+		const float TraceLength = ScanRange + FVector::Dist(ScanCtx.ViewOrigin, Owner->GetActorLocation());
+		const FVector TraceEnd = ScanCtx.ViewOrigin + ScanCtx.ViewDirection * TraceLength;
 		World->LineTraceSingleByChannel(ScanCtx.HitResult, ScanCtx.ViewOrigin, TraceEnd, ScanChannel, TraceParams);
 		ScanCtx.HitActor = ScanCtx.HitResult.GetActor();
 		ScanCtx.HitComp = ScanCtx.HitResult.GetComponent();
@@ -275,14 +288,6 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	CurrentContext.TraceHitResult = ScanCtx.HitResult;
 
 	bHasFocus = true;
-
-#if ENABLE_DRAW_DEBUG
-	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();
-	if (bShowPoints)
-	{
-		DrawDebugSphere(World, BestPoint.WorldLocation, 12.f, 8, FColor::White, false, 0.05f, 1, .25);
-	}
-#endif
 
 	if (bTargetChanged)
 	{
@@ -369,7 +374,6 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 	{
 		if (!Candidate) { continue; }
 		if (Candidate->RequiresDirectHit()) { continue; }
-
 		Points.Reset();
 		{
 			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
