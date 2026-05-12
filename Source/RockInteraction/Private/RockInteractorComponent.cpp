@@ -299,7 +299,6 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	}
 }
 
-
 bool URockInteractorComponent::TryResolveDirectHit(
 	const FInteractionScanContext& ScanCtx,
 	const FRockInteractionQuery& Query,

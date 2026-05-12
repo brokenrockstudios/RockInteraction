@@ -91,9 +91,7 @@ public:
 	// NOTE: MUST be deterministic thru the lifetime of the actor. Do not 'change' what shows up in the list.
 	// If you need more conditional state, consider something like 'enter minigame' mode that then grants you appropriate functionality
 	// This is only meant for first 'interaction' type abilities only.
-	virtual void GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const
-	{
-	}
+	virtual void GatherInteractionAbilities(TArray<TSubclassOf<UGameplayAbility>>& OutAbilities) const = 0;
 	
 	/**
 	 * Whether this actor requires a direct line-trace hit to become focused.

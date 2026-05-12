@@ -65,6 +65,7 @@ struct ROCKINTERACTION_API FRockInteractionPoint
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	ERockInteractionPointRole Role = ERockInteractionPointRole::Interaction;
 };
+static_assert(sizeof(FRockInteractionPoint) == 64, "Check layout");
 
 // ----------------------------------------------------------------
 

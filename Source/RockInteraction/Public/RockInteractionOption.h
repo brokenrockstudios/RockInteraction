@@ -42,22 +42,22 @@ struct ROCKINTERACTION_API FRockInteractionOption
 	 * Stable identity for this option. Used by the game layer to determine
 	 * what ability or behavior to invoke when the player confirms this option.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FGameplayTag OptionTag;
 
 	/** Primary display text for this option (e.g. "Open", "Pick Lock"). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FText Text;
 
 	/** Optional secondary display text (e.g., a hint or condition description). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FText SubText;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
+	UPROPERTY(EditAnywhere, Category = "Interaction")
 	TSubclassOf<UGameplayAbility> InteractionAbility = nullptr;
 
 	// Game layer extension - ability spec handle, item requirements, etc.
-	UPROPERTY(EditDefaultsOnly, meta = (ExcludeBaseStruct, BaseStruct = "/Script/RockInteraction.RockInteractionOptionData", ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, meta = (ExcludeBaseStruct, BaseStruct = "/Script/RockInteraction.RockInteractionOptionData", ShowOnlyInnerProperties))
 	FInstancedStruct OptionData;
 
 	bool operator==(const FRockInteractionOption& Other) const

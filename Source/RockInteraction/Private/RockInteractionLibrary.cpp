@@ -58,7 +58,6 @@ bool URockInteractionLibrary::RefreshPointsFromStaticMesh(TArray<FRockInteractio
 	// TMap would be overkill for typical socket counts (1-5), linear scan is fine
 	const FTransform ComponentTransform = Mesh->GetComponentTransform();
 	const TArray<UStaticMeshSocket*>& Sockets = StaticMesh->Sockets;
-	bool bAllValid = true;
 
 	int32 PointIndex = StartIndex;
 	int32 SocketIndex = 0;
@@ -96,7 +95,7 @@ bool URockInteractionLibrary::RefreshPointsFromStaticMesh(TArray<FRockInteractio
 		return false;
 	}
 
-	return bAllValid;
+	return true;
 }
 
 int32 URockInteractionLibrary::AppendPointsFromSkeletalMesh(TArray<FRockInteractionPoint>& OutPoints, USkeletalMeshComponent* Mesh)
