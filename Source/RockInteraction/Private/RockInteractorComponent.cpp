@@ -22,10 +22,27 @@ DECLARE_CYCLE_STAT(TEXT("RockInteraction_UpdateCandidates"), STAT_RockInteractio
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_LineTrace"), STAT_RockInteraction_LineTrace, STATGROUP_RockInteraction);
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_GatherPoints"), STAT_RockInteraction_GatherPoints, STATGROUP_RockInteraction);
 
+
+void FRockInteractorSecondaryTick::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
+{
+	if (Target && !Target->IsUnreachable())
+	{
+		Target->SecondaryTickComponent(DeltaTime, TickType);
+	}
+}
+
+
 // Sets default values for this component's properties
 URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.TickInterval = LineTraceScanRate; //1/100.0f; // default to 100hz.
+	// PrimaryComponentTick.SetTickFunctionEnable(false);
+
+	SecondaryTickFunction.bCanEverTick = true;
+	SecondaryTickFunction.TickInterval = SphereScanRate; //1/20.0f; // default to 20hz 
+	SecondaryTickFunction.TickGroup = TG_PrePhysics;
+	SecondaryTickFunction.SetTickFunctionEnable(false);
 }
 
 // ----------------------------------------------------------------
@@ -40,7 +57,10 @@ void URockInteractorComponent::BeginPlay()
 	const bool bShouldRun = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
 	if (bShouldRun)
 	{
-		StartSphereScan();
+		SecondaryTickFunction.Target = this;
+		SecondaryTickFunction.RegisterTickFunction(GetComponentLevel());
+		SecondaryTickFunction.SetTickFunctionEnable(true);
+		StartScans();
 	}
 	else
 	{
@@ -51,69 +71,81 @@ void URockInteractorComponent::BeginPlay()
 
 void URockInteractorComponent::OnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController)
 {
-	const bool bShouldRun = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
-	if (NewController && bShouldRun)
+	StartScans();
+	Pawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &ThisClass::OnControllerChanged);
+}
+
+void URockInteractorComponent::StartScans()
+{
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	if (!Pawn) { return; }
+
+	bLineTraceScanActive = Pawn->IsLocallyControlled();
+	if (bLineTraceScanActive)
 	{
-		Pawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &ThisClass::OnControllerChanged);
-		StartSphereScan();
+		SetComponentTickEnabled(true);
+	}
+
+	const bool bLocalOrAuthority = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
+	bSphereScanActive = bLocalOrAuthority && ScanMode == ERockInteractorScanMode::DirectHitWithLookAt;
+	if (bSphereScanActive)
+	{
+		SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
+		SecondaryTickFunction.SetTickFunctionEnable(true);
 	}
 }
 
-void URockInteractorComponent::AddPersistentCandidate(const TScriptInterface<IRockInteractableTarget>& Target)
-{
-	if (Target)
-	{
-		PersistentCandidates.AddUnique(Target);
-	}
-}
-
-void URockInteractorComponent::RemovePersistentCandidate(const TScriptInterface<IRockInteractableTarget>& Target)
-{
-	PersistentCandidates.RemoveSwap(Target);
-}
-
-void URockInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	SphereScanDelegate.Unbind();
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ScanTimerHandle);
-	}
-
-	Super::EndPlay(EndPlayReason);
-}
-
-// ----------------------------------------------------------------
-// LookAt scoring runs every frame, 1x line trace + cheap dot products only
 void URockInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	ScoreAndSelectFocused();
+	if (bLineTraceScanActive)
+	{
+		TickLineTrace();
+	}
 
 #if ENABLE_DRAW_DEBUG
 	const bool bShowPoints = CVarShowInteractionPoints.GetValueOnGameThread();
 	if (bShowPoints)
 	{
-		AActor* Owner = GetOwner();
+		const float LifeTime = PrimaryComponentTick.TickInterval;
 		UWorld* World = GetWorld();
-		DrawDebugSphere(World, Owner->GetActorLocation(), ScanRange, 12, Candidates.Num() > 0 ? FColor::Green : FColor::Cyan, false, 0);
+		DrawDebugSphere(GetWorld(), GetOwner()->GetActorLocation(), ScanRange, 12, Candidates.Num() > 0 ? FColor::Green : FColor::Cyan, false, LifeTime);
 		if (bHasFocus)
 		{
-			DrawDebugSphere(World, CurrentContext.Point.WorldLocation, 12.f, 8, FColor::White, false, 0, 1, .25);
+			DrawDebugSphere(World, CurrentContext.Point.WorldLocation, 12.f, 8, FColor::White, false, LifeTime, 1, .25);
 		}
 	}
 #endif
 }
 
-void URockInteractorComponent::StartSphereScan()
+void URockInteractorComponent::SecondaryTickComponent(float DeltaTime, ELevelTick TickType)
 {
-	const APawn* Pawn = Cast<APawn>(GetOwner());
-	if (!Pawn) { return; }
-	UWorld* World = GetWorld();
-	if (!ensure(World)) { return; }
-	SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
-	World->GetTimerManager().SetTimer(ScanTimerHandle, this, &ThisClass::TickSphereScan, ScanRate, /* bLoop= */ true);
+	if (bSphereScanActive)
+	{
+		TickSphereScan();
+	}
 }
+
+
+void URockInteractorComponent::AddPersistentCandidate(const FRockInteractionCandidateEntry& CandidateEntry)
+{
+	if (CandidateEntry.Target)
+	{
+		PersistentCandidates.AddUnique(CandidateEntry);
+	}
+}
+
+void URockInteractorComponent::RemovePersistentCandidate(const FRockInteractionCandidateEntry& CandidateEntry)
+{
+	PersistentCandidates.RemoveSwap(CandidateEntry);
+}
+
+void URockInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	SphereScanDelegate.Unbind();
+	Super::EndPlay(EndPlayReason);
+}
+
 
 // ----------------------------------------------------------------
 // Sphere overlap at ScanRate (Default 20hz)
@@ -147,6 +179,14 @@ void URockInteractorComponent::OnScanComplete(const FTraceHandle& Handle, FOverl
 	UpdateCandidates(Datum.OutOverlaps);
 }
 
+static FRockInteractionCandidateEntry WrapAsTarget(AActor* OwningActor, UObject* TargetObject)
+{
+	FRockInteractionCandidateEntry CandidateEntry;
+	CandidateEntry.OwningActor = OwningActor;
+	CandidateEntry.Target.SetObject(TargetObject);
+	CandidateEntry.Target.SetInterface(Cast<IRockInteractableTarget>(TargetObject));
+	return CandidateEntry;
+}
 
 // ----------------------------------------------------------------
 
@@ -154,7 +194,7 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_UpdateCandidates);
 
-	TArray<TScriptInterface<IRockInteractableTarget>> NewCandidates;
+	TArray<FRockInteractionCandidateEntry> NewCandidates;
 
 	// Inject persistent candidates. Always relevant regardless of overlap
 	for (const auto& Persistent : PersistentCandidates)
@@ -170,26 +210,39 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 		// Check the actor itself first, then its components
 		if (Actor->Implements<URockInteractableTarget>())
 		{
-			TScriptInterface<IRockInteractableTarget> Target;
-			Target.SetObject(Actor);
-			Target.SetInterface(Cast<IRockInteractableTarget>(Actor));
-			NewCandidates.AddUnique(Target);
+			NewCandidates.AddUnique(WrapAsTarget(Actor, Actor));
+		}
+		else
+		{
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp->Implements<URockInteractableTarget>())
+				{
+					NewCandidates.AddUnique(WrapAsTarget(Actor, Comp));
+				}
+			}
 		}
 	}
 
 	// Diff: exits first, then enters
-	for (const auto& Prev : Candidates)
+	if (bEnableCandidateEnterEvents)
 	{
-		if (!NewCandidates.Contains(Prev))
+		for (const auto& Prev : Candidates)
 		{
-			OnCandidateExited(Prev);
+			if (!NewCandidates.Contains(Prev))
+			{
+				OnCandidateExited(Prev.Target);
+			}
 		}
 	}
-	for (const auto& Next : NewCandidates)
+	if (bEnableCandidateExitEvents)
 	{
-		if (!Candidates.Contains(Next))
+		for (const auto& Next : NewCandidates)
 		{
-			OnCandidateEntered(Next);
+			if (!Candidates.Contains(Next))
+			{
+				OnCandidateEntered(Next.Target);
+			}
 		}
 	}
 
@@ -217,7 +270,7 @@ void URockInteractorComponent::OnCandidateExited(const TScriptInterface<IRockInt
 	// Do game specific things, such as adding GAS abilities based upon candidates.
 }
 
-void URockInteractorComponent::OnCandidatesUpdated(const TArray<TScriptInterface<IRockInteractableTarget>>& NewCandidates)
+void URockInteractorComponent::OnCandidatesUpdated(const TArray<FRockInteractionCandidateEntry>& NewCandidates)
 {
 	// Do game specific things, such as adding GAS abilities based upon candidates.
 }
@@ -226,7 +279,8 @@ void URockInteractorComponent::OnCandidatesUpdated(const TArray<TScriptInterface
 // ----------------------------------------------------------------
 // Per-frame scoring
 
-void URockInteractorComponent::ScoreAndSelectFocused()
+// ScoreAndSelectFocused
+void URockInteractorComponent::TickLineTrace()
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScoreAndSelect);
 
@@ -259,14 +313,15 @@ void URockInteractorComponent::ScoreAndSelectFocused()
 	// --- Build query ---
 	FRockInteractionQuery Query;
 	Query.Instigator = Owner;
-	// TODO: populate query tags from instigator state if needed
+	Query.InteractionTags = QueryInteractionTags;
 
 	// --- Score ---
-	TScriptInterface<IRockInteractableTarget> BestTarget;
+	TScriptInterface<IRockInteractableTarget> BestTarget = nullptr;
 	FRockInteractionPoint BestPoint;
 
 	// Try Direct Hit, otherwise fallback to LookAt
-	if (!TryResolveDirectHit(ScanCtx, Query, BestTarget, BestPoint))
+	TryResolveDirectHit(ScanCtx, Query, BestTarget, BestPoint);
+	if (!BestTarget && ScanMode == ERockInteractorScanMode::DirectHitWithLookAt)
 	{
 		ScoreCandidatesByLookAt(ScanCtx, Query, BestTarget, BestPoint);
 	}
@@ -306,57 +361,78 @@ bool URockInteractorComponent::TryResolveDirectHit(
 	FRockInteractionPoint& OutPoint) const
 {
 	if (!ScanCtx.HitActor) { return false; }
-	if (!ScanCtx.HitActor->Implements<URockInteractableTarget>()) { return false; }
+	const bool bActorImplements = ScanCtx.HitActor->Implements<URockInteractableTarget>();
+	const bool bComponentImplements = ScanCtx.HitComp && ScanCtx.HitComp->Implements<URockInteractableTarget>();
+	if (!bActorImplements && !bComponentImplements) { return false; }
+
+	// When sphere scan is off, no candidates list — wrap hit target directly
+	if (ScanMode == ERockInteractorScanMode::DirectHitOnly)
+	{
+		UObject* HitObject = bActorImplements ? static_cast<UObject*>(ScanCtx.HitActor) : static_cast<UObject*>(ScanCtx.HitComp);
+		TScriptInterface<IRockInteractableTarget> HitTarget;
+		HitTarget.SetObject(HitObject);
+		HitTarget.SetInterface(Cast<IRockInteractableTarget>(HitObject));
+		return ResolvePointsFromTarget(HitTarget, ScanCtx, Query, OutTarget, OutPoint);
+	}
 
 	for (const auto& Candidate : Candidates)
 	{
-		if (!Candidate) { continue; }
-		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
-		if (CandidateActor != ScanCtx.HitActor) { continue; }
-
-		TArray<FRockInteractionPoint> Points;
-		{
-			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
-			if (!Candidate->GatherInteractionPoints(Query, Points))
-			{
-				return false; // Actor is hit but currently non-interactable; no fallback to LookAt
-			}
-		}
-
-		int32 IXPointCount = 0;
-		const FRockInteractionPoint* FirstIXPoint = nullptr;
-		const FRockInteractionPoint* ComponentMatchPoint = nullptr;
-		int32 ComponentMatchCount = 0;
-
-		for (const FRockInteractionPoint& Point : Points)
-		{
-			if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
-			++IXPointCount;
-			if (!FirstIXPoint) { FirstIXPoint = &Point; }
-			if (ScanCtx.HitComp && Point.SourceComponent.Get() == ScanCtx.HitComp)
-			{
-				++ComponentMatchCount;
-				ComponentMatchPoint = &Point;
-			}
-		}
-
-		const bool bUniqueComponentMatch = (ComponentMatchCount == 1);
-		const FRockInteractionPoint* Resolved = bUniqueComponentMatch ? ComponentMatchPoint
-			: (IXPointCount <= 1) ? FirstIXPoint
-			: nullptr; // ambiguous: 2+ IX on same component
-
-		if (Resolved || IXPointCount == 0)
-		{
-			OutTarget = Candidate;
-			OutPoint = Resolved ? *Resolved : FRockInteractionPoint();
-			return true;
-		}
-
-		// Ambiguous: fall through to LookAt, but we already found the candidate so stop searching
-		return false;
+		if (!Candidate.Target) { continue; }
+		if (Candidate.OwningActor != ScanCtx.HitActor) { continue; }
+		return ResolvePointsFromTarget(Candidate.Target, ScanCtx, Query, OutTarget, OutPoint);
 	}
 
-	// HitActor not in candidates
+	// HitTarget not directly resolvable
+	return false;
+}
+
+
+bool URockInteractorComponent::ResolvePointsFromTarget(
+	const TScriptInterface<IRockInteractableTarget>& Candidate,
+	const FInteractionScanContext& ScanCtx,
+	const FRockInteractionQuery& Query,
+	TScriptInterface<IRockInteractableTarget>& OutTarget,
+	FRockInteractionPoint& OutPoint) const
+{
+	TArray<FRockInteractionPoint> Points;
+	{
+		SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
+		if (!Candidate->GatherInteractionPoints(Query, Points))
+		{
+			return false; // Hit but non-interactable, no fallback to LookAt
+		}
+	}
+
+	int32 IXPointCount = 0;
+	const FRockInteractionPoint* FirstIXPoint = nullptr;
+	const FRockInteractionPoint* ComponentMatchPoint = nullptr;
+	int32 ComponentMatchCount = 0;
+
+	for (const FRockInteractionPoint& Point : Points)
+	{
+		if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
+		++IXPointCount;
+		if (!FirstIXPoint) { FirstIXPoint = &Point; }
+		if (ScanCtx.HitComp && Point.SourceComponent.Get() == ScanCtx.HitComp)
+		{
+			++ComponentMatchCount;
+			ComponentMatchPoint = &Point;
+		}
+	}
+
+	const bool bUniqueComponentMatch = (ComponentMatchCount == 1);
+	const FRockInteractionPoint* Resolved = bUniqueComponentMatch ? ComponentMatchPoint
+		: (IXPointCount <= 1) ? FirstIXPoint
+		: nullptr; // ambiguous: 2+ IX on same component
+
+	if (Resolved || IXPointCount == 0)
+	{
+		OutTarget = Candidate;
+		OutPoint = Resolved ? *Resolved : FRockInteractionPoint();
+		return true;
+	}
+
+	// Ambiguous: fall through to LookAt
 	return false;
 }
 
@@ -369,30 +445,29 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 	float BestScore = -FLT_MAX;
 	TArray<FRockInteractionPoint> Points;
 
-	for (const auto& Candidate : Candidates)
+	for (const auto& CandidateEntry : Candidates)
 	{
-		if (!Candidate) { continue; }
-		if (Candidate->RequiresDirectHit()) { continue; }
+		if (!CandidateEntry.Target) { continue; }
+		if (CandidateEntry.Target->RequiresDirectHit()) { continue; }
 		Points.Reset();
 		{
 			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
-			if (!Candidate->GatherInteractionPoints(Query, Points)) { continue; }
+			if (!CandidateEntry.Target->GatherInteractionPoints(Query, Points)) { continue; }
 		}
 
-		const AActor* CandidateActor = Cast<AActor>(Candidate.GetObject());
 
 		if (Points.IsEmpty())
 		{
-			if (!CandidateActor) { continue; }
-			const FVector ToActor = (CandidateActor->GetActorLocation() - ScanCtx.ViewOrigin).GetSafeNormal();
+			if (!CandidateEntry.OwningActor) { continue; }
+			const FVector ToActor = (CandidateEntry.OwningActor->GetActorLocation() - ScanCtx.ViewOrigin).GetSafeNormal();
 			const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToActor);
 			if (Dot > ScanCtx.LookAtThresholdCos && Dot > BestScore)
 			{
 				BestScore = Dot;
-				OutTarget = Candidate;
+				OutTarget = CandidateEntry.Target;
 				FRockInteractionPoint Fallback;
-				Fallback.WorldLocation = CandidateActor->GetActorLocation();
-				Fallback.SourceComponent = CandidateActor->GetRootComponent();
+				Fallback.WorldLocation = CandidateEntry.OwningActor->GetActorLocation();
+				Fallback.SourceComponent = CandidateEntry.OwningActor->GetRootComponent();
 				Fallback.Role = ERockInteractionPointRole::Interaction;
 				OutPoint = Fallback;
 			}
@@ -410,7 +485,7 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 				if (Dot > EffectiveThresholdCos && Dot > BestScore)
 				{
 					BestScore = Dot;
-					OutTarget = Candidate;
+					OutTarget = CandidateEntry.Target;
 					OutPoint = Point;
 				}
 			}
@@ -463,8 +538,8 @@ void URockInteractorComponent::DrawInteractionPointDebug(const UWorld* World, co
 		FLinearColor(1.f, 0.f, 0.f),
 		T).ToFColor(true);
 
-	DrawDebugSphere(World, Location, 12.f, 8, Color, false, 0.05f, 0, .25);
-	DrawDebugString(World, Location + FVector(0, 0, 20.f), FString::Printf(TEXT("%.2f"), Degrees), nullptr, Color, 0.05f, true, 1.2);
+	DrawDebugSphere(World, Location, 12.f, 8, Color, false, PrimaryComponentTick.TickInterval, 0, .25);
+	DrawDebugString(World, Location + FVector(0, 0, 20.f), FString::Printf(TEXT("%.2f"), Degrees), nullptr, Color, PrimaryComponentTick.TickInterval, true, 1.2);
 #endif
 }
 

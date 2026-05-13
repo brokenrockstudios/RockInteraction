@@ -6,6 +6,8 @@
 #include "StructUtils/InstancedStruct.h"
 #include "RockInteractionTypes.generated.h"
 
+class IRockInteractableTarget;
+
 ROCKINTERACTION_API DECLARE_LOG_CATEGORY_EXTERN(LogRockInteraction, Display, All);
 
 UENUM(BlueprintType)
@@ -13,6 +15,25 @@ enum class ERockInteractionPointRole : uint8
 {
 	Interaction, // IX_ : selectable, shown in UI, committed on interact
 	Visibility, // IX_VP_ : Visibility Proxy. Never becomes BestPoint
+};
+
+// Sphere + LookAt is slightly more expensive but requires 1 IX per mesh or dedicated component
+UENUM()
+enum class ERockInteractorScanMode : uint8
+{
+	DirectHitWithLookAt, // current behavior, line trace first, then fallback to sphere + LookAt if no direct hit
+	DirectHitOnly, // skip sphere entirely, pure line trace
+};
+
+struct FRockInteractionCandidateEntry
+{
+	TScriptInterface<IRockInteractableTarget> Target;
+	AActor* OwningActor = nullptr;
+
+	bool operator==(const FRockInteractionCandidateEntry& Other) const
+	{
+		return Target.GetObject() == Other.Target.GetObject();
+	}
 };
 
 /**
@@ -65,6 +86,7 @@ struct ROCKINTERACTION_API FRockInteractionPoint
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	ERockInteractionPointRole Role = ERockInteractionPointRole::Interaction;
 };
+
 static_assert(sizeof(FRockInteractionPoint) == 64, "Check layout");
 
 // ----------------------------------------------------------------

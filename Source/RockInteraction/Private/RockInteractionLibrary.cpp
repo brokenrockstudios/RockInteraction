@@ -237,7 +237,7 @@ bool URockInteractionLibrary::RefreshPointsFromTaggedComponents(
 		: FMath::Min(StartIndex + Count, InOutPoints.Num());
 	const int32 ExpectedCount = EndIndex - StartIndex;
 	if (ExpectedCount <= 0) { return true; }
-	
+
 	// Small-N: TMap allocates, but for N <= ~8 a TInlineAllocator-backed array
 	// and linear scan is faster. Pick based on your typical point count
 	// For now, TMap is fine and clearer
@@ -264,7 +264,7 @@ bool URockInteractionLibrary::RefreshPointsFromTaggedComponents(
 		InOutPoints[*FoundIdx].WorldLocation = Comp->GetComponentLocation();
 		++RefreshedCount;
 	};
-	
+
 	TryRefreshComponent(Root);
 
 	TArray<USceneComponent*> Candidates;
@@ -273,14 +273,23 @@ bool URockInteractionLibrary::RefreshPointsFromTaggedComponents(
 	{
 		TryRefreshComponent(Comp);
 	}
-	
+
 	if (RefreshedCount != ExpectedCount)
 	{
-		UE_LOG(LogRockInteraction, Warning,
+		UE_LOG(
+			LogRockInteraction, Warning,
 			TEXT("RefreshPointsFromTaggedComponents: refreshed %d / %d on %s. Full re-gather needed."),
 			RefreshedCount, ExpectedCount, *GetNameSafe(Root));
 		return false;
 	}
-	
+
 	return true;
+}
+
+AActor* URockInteractionLibrary::GetCandidateActor(const TScriptInterface<IRockInteractableTarget>& Candidate)
+{
+	UObject* Obj = Candidate.GetObject();
+	if (AActor* Actor = Cast<AActor>(Obj)) return Actor;
+	if (UActorComponent* Comp = Cast<UActorComponent>(Obj)) return Comp->GetOwner();
+	return nullptr;
 }

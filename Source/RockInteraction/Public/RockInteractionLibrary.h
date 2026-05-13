@@ -8,6 +8,7 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "RockInteractionLibrary.generated.h"
 
+class IRockInteractableTarget;
 /**
  * Stateless helpers for populating FRockInteractionPoint arrays from common
  * component configurations. Intended for use inside GatherInteractionPoints
@@ -23,7 +24,6 @@ class ROCKINTERACTION_API URockInteractionLibrary : public UBlueprintFunctionLib
 {
 	GENERATED_BODY()
 public:
-	
 	/**
 	 * Appends one FRockInteractionPoint per socket on a UStaticMeshComponent whose
 	 * name starts with SocketPrefix. Iterates UStaticMesh::Sockets directly. O(N).
@@ -38,7 +38,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Rock|Interaction")
 	static int32 AppendPointsFromStaticMesh(UPARAM(ref) TArray<FRockInteractionPoint>& OutPoints, UStaticMeshComponent* Mesh);
-	
+
 	/**
 	 * Refreshes WorldTransform for all points in InOutPoints whose SourceComponent
 	 * matches Mesh. Does not add or remove points. The array structure must already
@@ -121,5 +121,8 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Rock|Interaction")
 	static bool RefreshPointsFromTaggedComponents(UPARAM(ref) TArray<FRockInteractionPoint>& InOutPoints, USceneComponent* Root, bool bRecursive, int32 StartIndex, int32 Count);
+
+
+	static AActor* GetCandidateActor(const TScriptInterface<IRockInteractableTarget>& Candidate);
 private:
 };
