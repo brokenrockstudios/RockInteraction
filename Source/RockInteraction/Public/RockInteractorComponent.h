@@ -65,10 +65,7 @@ public:
 	FGameplayTagContainer QueryInteractionTags;
 
 	UPROPERTY(EditAnywhere, Category = "Interaction|Scan")
-	ERockInteractorScanMode ScanMode = ERockInteractorScanMode::DirectHitWithLookAt;
-
-	// UPROPERTY(EditDefaultsOnly, Category = "Interaction|Scan")
-	// bool bEnableSphereScan = true;
+	ERockInteractorScanMode ScanMode = ERockInteractorScanMode::DirectHitWithSphereOverlap;
 
 	// Turning these off would slight perf+, but would disable pre-granting abilities on proximity 
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Scan")

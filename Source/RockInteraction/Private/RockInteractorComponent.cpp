@@ -37,7 +37,7 @@ URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& Obj
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickInterval = LineTraceScanRate; //1/100.0f; // default to 100hz.
-	// PrimaryComponentTick.SetTickFunctionEnable(false);
+	PrimaryComponentTick.SetTickFunctionEnable(false);
 
 	SecondaryTickFunction.bCanEverTick = true;
 	SecondaryTickFunction.TickInterval = SphereScanRate; //1/20.0f; // default to 20hz 
@@ -51,15 +51,14 @@ URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& Obj
 void URockInteractorComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
+	SecondaryTickFunction.Target = this;
+	SecondaryTickFunction.RegisterTickFunction(GetComponentLevel());
+	
 	APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!Pawn) return;
 	const bool bShouldRun = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
 	if (bShouldRun)
 	{
-		SecondaryTickFunction.Target = this;
-		SecondaryTickFunction.RegisterTickFunction(GetComponentLevel());
-		SecondaryTickFunction.SetTickFunctionEnable(true);
 		StartScans();
 	}
 	else
@@ -87,11 +86,11 @@ void URockInteractorComponent::StartScans()
 	}
 
 	const bool bLocalOrAuthority = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
-	bSphereScanActive = bLocalOrAuthority && ScanMode == ERockInteractorScanMode::DirectHitWithLookAt;
+	bSphereScanActive = bLocalOrAuthority && ScanMode == ERockInteractorScanMode::DirectHitWithSphereOverlap;
 	if (bSphereScanActive)
 	{
-		SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
 		SecondaryTickFunction.SetTickFunctionEnable(true);
+		SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
 	}
 }
 
@@ -126,7 +125,6 @@ void URockInteractorComponent::SecondaryTickComponent(float DeltaTime, ELevelTic
 	}
 }
 
-
 void URockInteractorComponent::AddPersistentCandidate(const FRockInteractionCandidateEntry& CandidateEntry)
 {
 	if (CandidateEntry.Target)
@@ -145,7 +143,6 @@ void URockInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	SphereScanDelegate.Unbind();
 	Super::EndPlay(EndPlayReason);
 }
-
 
 // ----------------------------------------------------------------
 // Sphere overlap at ScanRate (Default 20hz)
@@ -321,7 +318,7 @@ void URockInteractorComponent::TickLineTrace()
 
 	// Try Direct Hit, otherwise fallback to LookAt
 	TryResolveDirectHit(ScanCtx, Query, BestTarget, BestPoint);
-	if (!BestTarget && ScanMode == ERockInteractorScanMode::DirectHitWithLookAt)
+	if (!BestTarget && ScanMode == ERockInteractorScanMode::DirectHitWithSphereOverlap)
 	{
 		ScoreCandidatesByLookAt(ScanCtx, Query, BestTarget, BestPoint);
 	}
@@ -365,7 +362,7 @@ bool URockInteractorComponent::TryResolveDirectHit(
 	const bool bComponentImplements = ScanCtx.HitComp && ScanCtx.HitComp->Implements<URockInteractableTarget>();
 	if (!bActorImplements && !bComponentImplements) { return false; }
 
-	// When sphere scan is off, no candidates list — wrap hit target directly
+	// When sphere scan is off, no candidates list. Wrap hit target directly
 	if (ScanMode == ERockInteractorScanMode::DirectHitOnly)
 	{
 		UObject* HitObject = bActorImplements ? static_cast<UObject*>(ScanCtx.HitActor) : static_cast<UObject*>(ScanCtx.HitComp);
@@ -385,7 +382,6 @@ bool URockInteractorComponent::TryResolveDirectHit(
 	// HitTarget not directly resolvable
 	return false;
 }
-
 
 bool URockInteractorComponent::ResolvePointsFromTarget(
 	const TScriptInterface<IRockInteractableTarget>& Candidate,

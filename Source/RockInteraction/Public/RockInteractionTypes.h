@@ -21,7 +21,7 @@ enum class ERockInteractionPointRole : uint8
 UENUM()
 enum class ERockInteractorScanMode : uint8
 {
-	DirectHitWithLookAt, // current behavior, line trace first, then fallback to sphere + LookAt if no direct hit
+	DirectHitWithSphereOverlap, // current behavior, line trace first, then fallback to sphere + LookAt if no direct hit
 	DirectHitOnly, // skip sphere entirely, pure line trace
 };
 
