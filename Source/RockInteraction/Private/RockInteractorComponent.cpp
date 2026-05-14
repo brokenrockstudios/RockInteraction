@@ -56,8 +56,7 @@ void URockInteractorComponent::BeginPlay()
 	
 	APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!Pawn) return;
-	const bool bShouldRun = Pawn->IsLocallyControlled() || Pawn->HasAuthority();
-	if (bShouldRun)
+	if (Pawn->GetController())
 	{
 		StartScans();
 	}
