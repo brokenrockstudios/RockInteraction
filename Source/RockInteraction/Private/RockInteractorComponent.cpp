@@ -36,11 +36,11 @@ void FRockInteractorSecondaryTick::ExecuteTick(float DeltaTime, ELevelTick TickT
 URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.TickInterval = LineTraceScanRate; //1/100.0f; // default to 100hz.
+	PrimaryComponentTick.TickInterval = LineTraceScanRate;
 	PrimaryComponentTick.SetTickFunctionEnable(false);
 
 	SecondaryTickFunction.bCanEverTick = true;
-	SecondaryTickFunction.TickInterval = SphereScanRate; //1/20.0f; // default to 20hz 
+	SecondaryTickFunction.TickInterval = SphereScanRate;
 	SecondaryTickFunction.TickGroup = TG_PrePhysics;
 	SecondaryTickFunction.SetTickFunctionEnable(false);
 }
@@ -51,9 +51,12 @@ URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& Obj
 void URockInteractorComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	PrimaryComponentTick.TickInterval = LineTraceScanRate;
+	SecondaryTickFunction.TickInterval = SphereScanRate;
+
 	SecondaryTickFunction.Target = this;
 	SecondaryTickFunction.RegisterTickFunction(GetComponentLevel());
-	
+
 	APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!Pawn) return;
 	if (Pawn->GetController())
