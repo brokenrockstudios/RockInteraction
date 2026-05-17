@@ -132,6 +132,7 @@ protected:
 	virtual void OnCandidatesUpdated(const TArray<FRockInteractionCandidateEntry>& NewCandidates);
 	virtual void SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget);
 	virtual void ClearFocus();
+	virtual FRockInteractionQuery BuildQuery();
 
 	void TickLineTrace();
 	bool TryResolveDirectHit(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;

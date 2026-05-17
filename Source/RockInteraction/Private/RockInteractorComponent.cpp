@@ -279,7 +279,7 @@ void URockInteractorComponent::TickLineTrace()
 		ClearFocus();
 		return;
 	}
-	
+
 	ScanCtx.LookAtThresholdCos = FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees));
 
 	AActor* Owner = GetOwner();
@@ -300,9 +300,7 @@ void URockInteractorComponent::TickLineTrace()
 	}
 
 	// --- Build query ---
-	FRockInteractionQuery Query;
-	Query.Instigator = Owner;
-	Query.InteractionTags = QueryInteractionTags;
+	FRockInteractionQuery Query = BuildQuery();
 
 	// --- Score ---
 	TScriptInterface<IRockInteractableTarget> BestTarget = nullptr;
@@ -341,13 +339,14 @@ void URockInteractorComponent::TickLineTrace()
 
 		if (NewOptions.IsEmpty())
 		{
-			UE_LOG(LogRockInteraction, Warning,
+			UE_LOG(
+				LogRockInteraction, Warning,
 				TEXT("[RockInteractor] %s scored as best candidate but returned no options. Point should gate availability upstream. Skipping focus."),
 				*GetNameSafe(BestTarget.GetObject()));
 			ClearFocus();
 			return;
 		}
-		
+
 		// Commit, we know we have valid options
 		SetFocusedTarget(BestTarget);
 		CurrentOptions = MoveTemp(NewOptions);
@@ -646,6 +645,17 @@ void URockInteractorComponent::ClearFocus()
 	CurrentOptions.Reset();
 
 	OnFocusChanged.Broadcast(CurrentContext);
+}
+
+FRockInteractionQuery URockInteractorComponent::BuildQuery()
+{
+	FRockInteractionQuery Query;
+	Query.Instigator = GetOwner();
+
+	Query.InteractionTags = QueryInteractionTags;
+	// Let child classes append dynamic tags from ASC, wherever
+	// e.g. Query.InteractionTags.AppendTags(GetDynamicContextTags());
+	return Query;
 }
 
 void URockInteractorComponent::TriggerInteraction(int32 OptionIndex)
