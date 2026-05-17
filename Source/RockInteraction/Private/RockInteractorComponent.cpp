@@ -279,7 +279,7 @@ void URockInteractorComponent::TickLineTrace()
 		ClearFocus();
 		return;
 	}
-
+	
 	ScanCtx.LookAtThresholdCos = FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees));
 
 	AActor* Owner = GetOwner();
@@ -335,9 +335,22 @@ void URockInteractorComponent::TickLineTrace()
 
 	if (bTargetChanged)
 	{
+		// Speculatively gather options before commiting focus
+		FRockInteractionOptions NewOptions;
+		BestTarget->GatherInteractionOptions(CurrentContext, NewOptions);
+
+		if (NewOptions.IsEmpty())
+		{
+			UE_LOG(LogRockInteraction, Warning,
+				TEXT("[RockInteractor] %s scored as best candidate but returned no options. Point should gate availability upstream. Skipping focus."),
+				*GetNameSafe(BestTarget.GetObject()));
+			ClearFocus();
+			return;
+		}
+		
+		// Commit, we know we have valid options
 		SetFocusedTarget(BestTarget);
-		CurrentOptions.Reset();
-		BestTarget->GatherInteractionOptions(CurrentContext, CurrentOptions);
+		CurrentOptions = MoveTemp(NewOptions);
 		OnFocusChanged.Broadcast(CurrentContext);
 		OnOptionsChanged.Broadcast(CurrentOptions);
 	}
