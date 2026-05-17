@@ -36,11 +36,9 @@ void FRockInteractorSecondaryTick::ExecuteTick(float DeltaTime, ELevelTick TickT
 URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.TickInterval = LineTraceScanRate;
 	PrimaryComponentTick.SetTickFunctionEnable(false);
 
 	SecondaryTickFunction.bCanEverTick = true;
-	SecondaryTickFunction.TickInterval = SphereScanRate;
 	SecondaryTickFunction.TickGroup = TG_PrePhysics;
 	SecondaryTickFunction.SetTickFunctionEnable(false);
 }
@@ -68,6 +66,8 @@ void URockInteractorComponent::BeginPlay()
 		// Sometimes our pawn gets spawned before it has a controller, so let's just wait until we have one.
 		Pawn->ReceiveControllerChangedDelegate.AddDynamic(this, &ThisClass::OnControllerChanged);
 	}
+
+	ScanRangeSquared = ScanRange * ScanRange;
 }
 
 void URockInteractorComponent::OnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController)
@@ -211,16 +211,6 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 		{
 			NewCandidates.AddUnique(WrapAsTarget(Actor, Actor));
 		}
-		else
-		{
-			for (UActorComponent* Comp : Actor->GetComponents())
-			{
-				if (Comp->Implements<URockInteractableTarget>())
-				{
-					NewCandidates.AddUnique(WrapAsTarget(Actor, Comp));
-				}
-			}
-		}
 	}
 
 	// Diff: exits first, then enters
@@ -361,13 +351,12 @@ bool URockInteractorComponent::TryResolveDirectHit(
 {
 	if (!ScanCtx.HitActor) { return false; }
 	const bool bActorImplements = ScanCtx.HitActor->Implements<URockInteractableTarget>();
-	const bool bComponentImplements = ScanCtx.HitComp && ScanCtx.HitComp->Implements<URockInteractableTarget>();
-	if (!bActorImplements && !bComponentImplements) { return false; }
+	if (!bActorImplements) { return false; }
 
 	// When sphere scan is off, no candidates list. Wrap hit target directly
 	if (ScanMode == ERockInteractorScanMode::DirectHitOnly)
 	{
-		UObject* HitObject = bActorImplements ? static_cast<UObject*>(ScanCtx.HitActor) : static_cast<UObject*>(ScanCtx.HitComp);
+		UObject* HitObject = ScanCtx.HitActor;
 		TScriptInterface<IRockInteractableTarget> HitTarget;
 		HitTarget.SetObject(HitObject);
 		HitTarget.SetInterface(Cast<IRockInteractableTarget>(HitObject));
@@ -472,8 +461,15 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 		}
 		else
 		{
+			FVector ActorLocation = GetOwner()->GetActorLocation();
 			for (const FRockInteractionPoint& Point : Points)
 			{
+				if (FVector::DistSquared(ActorLocation, Point.WorldLocation) > ScanRangeSquared)
+				{
+					// Just distance check for now. But later on, this might be a worthwhile place to do a 'visibility check'?
+					// Otherwise 
+					continue;
+				}
 				const FVector ToPoint = (Point.WorldLocation - ScanCtx.ViewOrigin).GetSafeNormal();
 				const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToPoint);
 				DrawInteractionPointDebug(GetWorld(), Point.WorldLocation, Dot);

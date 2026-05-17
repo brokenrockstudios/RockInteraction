@@ -160,7 +160,8 @@ private:
 
 	bool bSphereScanActive = false;
 	bool bLineTraceScanActive = false;
-
+	float ScanRangeSquared = 0;
+	
 	UPROPERTY()
 	FRockInteractorSecondaryTick SecondaryTickFunction;
 
