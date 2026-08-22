@@ -651,7 +651,6 @@ FRockInteractionQuery URockInteractorComponent::BuildQuery()
 {
 	FRockInteractionQuery Query;
 	Query.Instigator = GetOwner();
-
 	Query.InteractionTags = QueryInteractionTags;
 	// Let child classes append dynamic tags from ASC, wherever
 	// e.g. Query.InteractionTags.AppendTags(GetDynamicContextTags());
