@@ -18,6 +18,7 @@ RockInteraction provides a complete interaction pipeline driven by a component o
   * Fast Path: Line trace with early out on immediate hits. Exits immediately if the trace hits a valid component with assosciated InteractionPoint (0-1 on actor or no more than 1 per component)
   * Fallback: LookatPercentage scoring when no immediate hit is found, with optional per-point override thresholds for activation and focus
   * Helper IX_VP Visibility probes participate in LookAtScoring and resolve back to their assosciated Interaction Point, such as for unusual shaped objects (e.g. long thin sword)
+* Hint list (`bEnableHints`, off by default): `GetHintPoints()` returns the Interaction points of nearby candidates that a game can mark with dots, for the locally controlled pawn only. Points within `HintRange` (0 = `ScanRange`) and `HintMaxAimDegrees` of the view direction are ranked by angle from the view centre, the `MaxHints` closest are kept, the focused one is flagged, and a round-robin visibility trace (`HintTracesPerPass` per scoring pass, from the view, on `HintVisibilityChannel`) fills `bVisible`. Each entry carries the point's `PointTag`, so a game can pick a colour or icon per verb. The plugin draws nothing.
  
 
 ## Installation

@@ -21,7 +21,8 @@ DECLARE_CYCLE_STAT(TEXT("RockInteraction_ScoreAndSelect"), STAT_RockInteraction_
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_UpdateCandidates"), STAT_RockInteraction_UpdateCandidates, STATGROUP_RockInteraction);
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_LineTrace"), STAT_RockInteraction_LineTrace, STATGROUP_RockInteraction);
 DECLARE_CYCLE_STAT(TEXT("RockInteraction_GatherPoints"), STAT_RockInteraction_GatherPoints, STATGROUP_RockInteraction);
-
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_Hints"), STAT_RockInteraction_Hints, STATGROUP_RockInteraction);
+DECLARE_CYCLE_STAT(TEXT("RockInteraction_HintTrace"), STAT_RockInteraction_HintTrace, STATGROUP_RockInteraction);
 
 void FRockInteractorSecondaryTick::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 {
@@ -30,7 +31,6 @@ void FRockInteractorSecondaryTick::ExecuteTick(float DeltaTime, ELevelTick TickT
 		Target->SecondaryTickComponent(DeltaTime, TickType);
 	}
 }
-
 
 // Sets default values for this component's properties
 URockInteractorComponent::URockInteractorComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
@@ -102,6 +102,7 @@ void URockInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	if (bLineTraceScanActive)
 	{
 		TickLineTrace();
+		TickHints();
 	}
 
 #if ENABLE_DRAW_DEBUG
@@ -124,6 +125,29 @@ void URockInteractorComponent::SecondaryTickComponent(float DeltaTime, ELevelTic
 	if (bSphereScanActive)
 	{
 		TickSphereScan();
+	}
+}
+
+void URockInteractorComponent::PruneInvalidCandidates()
+{
+	PersistentCandidates.RemoveAll([](const FRockInteractionCandidateEntry& Entry) { return !Entry.IsValid(); });
+
+	// A destroyed target still gets its exit event (the game side keys grants by object), as the scan diff did before.
+	// An entry GC already nulled has no object left to report.
+	for (int32 Index = Candidates.Num() - 1; Index >= 0; --Index)
+	{
+		if (Candidates[Index].IsValid()) { continue; }
+		const FRockInteractionCandidateEntry Gone = Candidates[Index];
+		Candidates.RemoveAt(Index, EAllowShrinking::No);
+		if (bEnableCandidateExitEvents && Gone.Target.GetObject())
+		{
+			OnCandidateExited(Gone.Target);
+		}
+	}
+
+	if (bHasFocus && !::IsValid(CurrentContext.Target.GetObject()))
+	{
+		ClearFocus();
 	}
 }
 
@@ -193,6 +217,8 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_UpdateCandidates);
 
+	PruneInvalidCandidates();
+
 	TArray<FRockInteractionCandidateEntry> NewCandidates;
 
 	// Inject persistent candidates. Always relevant regardless of overlap
@@ -204,7 +230,7 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	for (const FOverlapResult& Result : Overlaps)
 	{
 		AActor* Actor = Result.GetActor();
-		if (!Actor) { continue; }
+		if (!IsValid(Actor)) { continue; }
 
 		// Check the actor itself first, then its components
 		if (Actor->Implements<URockInteractableTarget>())
@@ -214,7 +240,7 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 	}
 
 	// Diff: exits first, then enters
-	if (bEnableCandidateEnterEvents)
+	if (bEnableCandidateExitEvents)
 	{
 		for (const auto& Prev : Candidates)
 		{
@@ -224,7 +250,7 @@ void URockInteractorComponent::UpdateCandidates(TArray<FOverlapResult>& Overlaps
 			}
 		}
 	}
-	if (bEnableCandidateExitEvents)
+	if (bEnableCandidateEnterEvents)
 	{
 		for (const auto& Next : NewCandidates)
 		{
@@ -272,6 +298,9 @@ void URockInteractorComponent::OnCandidatesUpdated(const TArray<FRockInteraction
 void URockInteractorComponent::TickLineTrace()
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScoreAndSelect);
+
+	// A target destroyed since the last pass (a picked-up world item) must not be scored or stay focused.
+	PruneInvalidCandidates();
 
 	FInteractionScanContext ScanCtx;
 	if (!GetViewPoint(ScanCtx.ViewOrigin, ScanCtx.ViewDirection))
@@ -324,18 +353,22 @@ void URockInteractorComponent::TickLineTrace()
 
 	// --- Dirty check & broadcast ---
 	const bool bTargetChanged = (CurrentContext.Target != BestTarget);
+	// Track point identity, not its animated world location.
+	const bool bPointChanged = CurrentContext.Point.PointTag != BestPoint.PointTag
+		|| CurrentContext.Point.SourceComponent != BestPoint.SourceComponent
+		|| CurrentContext.Point.SocketName != BestPoint.SocketName
+		|| CurrentContext.Point.Role != BestPoint.Role;
 
-	CurrentContext.Point = BestPoint;
-	CurrentContext.Query = Query;
-	CurrentContext.TraceHitResult = ScanCtx.HitResult;
-
-	bHasFocus = true;
-
-	if (bTargetChanged)
+	if (bTargetChanged || bPointChanged)
 	{
-		// Speculatively gather options before commiting focus
+		// Gather against the winning target before committing focus.
+		FRockInteractionContext NewContext = CurrentContext;
+		NewContext.Target = BestTarget;
+		NewContext.Point = BestPoint;
+		NewContext.Query = Query;
+		NewContext.TraceHitResult = ScanCtx.HitResult;
 		FRockInteractionOptions NewOptions;
-		BestTarget->GatherInteractionOptions(CurrentContext, NewOptions);
+		BestTarget->GatherInteractionOptions(NewContext, NewOptions);
 
 		if (NewOptions.IsEmpty())
 		{
@@ -343,15 +376,29 @@ void URockInteractorComponent::TickLineTrace()
 				LogRockInteraction, Warning,
 				TEXT("[RockInteractor] %s scored as best candidate but returned no options. Point should gate availability upstream. Skipping focus."),
 				*GetNameSafe(BestTarget.GetObject()));
+			// Drops focus from whatever was focused before. A no-op (and no broadcast) if nothing was.
 			ClearFocus();
 			return;
 		}
 
 		// Commit, we know we have valid options
-		SetFocusedTarget(BestTarget);
+		if (bTargetChanged)
+		{
+			SetFocusedTarget(BestTarget);
+		}
+		CurrentContext.Point = BestPoint;
+		CurrentContext.Query = Query;
+		CurrentContext.TraceHitResult = ScanCtx.HitResult;
+		bHasFocus = true;
 		CurrentOptions = MoveTemp(NewOptions);
 		OnFocusChanged.Broadcast(CurrentContext);
 		OnOptionsChanged.Broadcast(CurrentOptions);
+	}
+	else
+	{
+		CurrentContext.Point = BestPoint;
+		CurrentContext.Query = Query;
+		CurrentContext.TraceHitResult = ScanCtx.HitResult;
 	}
 }
 
@@ -377,7 +424,7 @@ bool URockInteractorComponent::TryResolveDirectHit(
 
 	for (const auto& Candidate : Candidates)
 	{
-		if (!Candidate.Target) { continue; }
+		if (!Candidate.IsValid()) { continue; }
 		if (Candidate.OwningActor != ScanCtx.HitActor) { continue; }
 		return ResolvePointsFromTarget(Candidate.Target, ScanCtx, Query, OutTarget, OutPoint);
 	}
@@ -446,7 +493,7 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 
 	for (const auto& CandidateEntry : Candidates)
 	{
-		if (!CandidateEntry.Target) { continue; }
+		if (!CandidateEntry.IsValid()) { continue; }
 		if (CandidateEntry.Target->RequiresDirectHit()) { continue; }
 		Points.Reset();
 		{
@@ -457,7 +504,7 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 
 		if (Points.IsEmpty())
 		{
-			if (!CandidateEntry.OwningActor) { continue; }
+			if (!IsValid(CandidateEntry.OwningActor)) { continue; }
 			const FVector ToActor = (CandidateEntry.OwningActor->GetActorLocation() - ScanCtx.ViewOrigin).GetSafeNormal();
 			const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToActor);
 			if (Dot > ScanCtx.LookAtThresholdCos && Dot > BestScore)
@@ -524,6 +571,171 @@ void URockInteractorComponent::ResolveVisibilityProxy(
 	}
 }
 
+// ----------------------------------------------------------------
+// Hints
+
+void URockInteractorComponent::TickHints()
+{
+	if (!bEnableHints)
+	{
+		HintPoints.Reset();
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World) { return; }
+
+	const double Now = World->GetTimeSeconds();
+	if (Now >= NextHintRefreshTime)
+	{
+		NextHintRefreshTime = Now + HintRefreshRate;
+		RefreshHintList();
+	}
+
+	UpdateHintFocusFlags();
+	if (bTraceHintVisibility)
+	{
+		TraceHintVisibility();
+	}
+}
+
+void URockInteractorComponent::RefreshHintList()
+{
+	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_Hints);
+
+	FVector ViewOrigin;
+	FVector ViewDirection;
+	const AActor* Owner = GetOwner();
+	if (!Owner || !GetViewPoint(ViewOrigin, ViewDirection))
+	{
+		HintPoints.Reset();
+		return;
+	}
+
+	const float Range = HintRange > 0.f ? HintRange : ScanRange;
+	const float RangeSquared = Range * Range;
+	const float MinAimDot = FMath::Cos(FMath::DegreesToRadians(HintMaxAimDegrees));
+	const FVector PawnLocation = Owner->GetActorLocation();
+	const FRockInteractionQuery Query = BuildQuery();
+
+	TArray<FRockInteractionHintPoint> NewHints;
+	TArray<FRockInteractionPoint> Points;
+
+	const auto Consider = [&](const FRockInteractionCandidateEntry& Entry, const FRockInteractionPoint& Point)
+	{
+		const float DistSquared = FVector::DistSquared(PawnLocation, Point.WorldLocation);
+		if (DistSquared > RangeSquared) { return; }
+
+		const FVector ToPoint = (Point.WorldLocation - ViewOrigin).GetSafeNormal();
+		const float Dot = FVector::DotProduct(ViewDirection, ToPoint);
+		if (Dot < MinAimDot) { return; }
+
+		FRockInteractionHintPoint& Hint = NewHints.AddDefaulted_GetRef();
+		Hint.Point = Point;
+		Hint.OwningActor = Entry.OwningActor.Get();
+		Hint.Distance = FMath::Sqrt(DistSquared);
+		Hint.AimAngleDegrees = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f)));
+		Hint.bVisible = !bTraceHintVisibility;
+	};
+
+	for (const FRockInteractionCandidateEntry& Entry : Candidates)
+	{
+		if (!Entry.IsValid()) { continue; }
+
+		Points.Reset();
+		{
+			SCOPE_CYCLE_COUNTER(STAT_RockInteraction_GatherPoints);
+			if (!Entry.Target->GatherInteractionPoints(Query, Points)) { continue; }
+		}
+
+		if (Points.IsEmpty())
+		{
+			// An interactable with no points of its own is marked at the actor, as LookAt scores it.
+			if (!::IsValid(Entry.OwningActor)) { continue; }
+			FRockInteractionPoint Fallback;
+			Fallback.WorldLocation = Entry.OwningActor->GetActorLocation();
+			Fallback.SourceComponent = Entry.OwningActor->GetRootComponent();
+			Consider(Entry, Fallback);
+			continue;
+		}
+
+		for (const FRockInteractionPoint& Point : Points)
+		{
+			// Visibility proxies only widen the look-at area; they are not something to interact with.
+			if (Point.Role != ERockInteractionPointRole::Interaction) { continue; }
+			Consider(Entry, Point);
+		}
+	}
+
+	NewHints.Sort([](const FRockInteractionHintPoint& A, const FRockInteractionHintPoint& B) { return A.AimAngleDegrees < B.AimAngleDegrees; });
+	if (NewHints.Num() > MaxHints)
+	{
+		NewHints.SetNum(MaxHints, EAllowShrinking::No);
+	}
+
+	// A point that stays listed keeps what its last trace found; a new one stays hidden until it has been traced.
+	if (bTraceHintVisibility)
+	{
+		for (FRockInteractionHintPoint& Hint : NewHints)
+		{
+			if (const FRockInteractionHintPoint* Old = HintPoints.FindByPredicate([&Hint](const FRockInteractionHintPoint& Existing) { return Existing.IsSamePoint(Hint); }))
+			{
+				Hint.bVisible = Old->bVisible;
+			}
+		}
+	}
+
+	HintPoints = MoveTemp(NewHints);
+	HintTraceCursor = 0;
+}
+
+void URockInteractorComponent::UpdateHintFocusFlags()
+{
+	for (FRockInteractionHintPoint& Hint : HintPoints)
+	{
+		Hint.bFocused = bHasFocus
+			&& Hint.OwningActor.Get() == CurrentContext.Target.GetObject()
+			&& Hint.Point.PointTag == CurrentContext.Point.PointTag
+			&& Hint.Point.SourceComponent == CurrentContext.Point.SourceComponent
+			&& Hint.Point.SocketName == CurrentContext.Point.SocketName;
+	}
+}
+
+void URockInteractorComponent::TraceHintVisibility()
+{
+	if (HintPoints.IsEmpty()) { return; }
+
+	FVector ViewOrigin;
+	FVector ViewDirection;
+	if (!GetViewPoint(ViewOrigin, ViewDirection)) { return; }
+
+	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_HintTrace);
+	const int32 Count = HintPoints.Num();
+	const int32 Traces = FMath::Min(HintTracesPerPass, Count);
+	for (int32 Done = 0; Done < Traces; ++Done)
+	{
+		HintTraceCursor %= Count;
+		FRockInteractionHintPoint& Hint = HintPoints[HintTraceCursor++];
+		Hint.bVisible = IsHintPointVisible(ViewOrigin, Hint);
+	}
+}
+
+bool URockInteractorComponent::IsHintPointVisible(const FVector& ViewOrigin, const FRockInteractionHintPoint& Hint) const
+{
+	const UWorld* World = GetWorld();
+	if (!World) { return true; }
+
+	const FVector ToPoint = Hint.Point.WorldLocation - ViewOrigin;
+	const float Length = ToPoint.Size();
+	if (Length <= HintVisibilityTolerance) { return true; }
+
+	// The target itself is not ignored: its own body hides a point on the far side. The tolerance keeps the surface the point sits on from doing so.
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(RockInteractionHintVisibility), false);
+	Params.AddIgnoredActor(GetOwner());
+	const FVector End = ViewOrigin + ToPoint / Length * (Length - HintVisibilityTolerance);
+	return !World->LineTraceTestByChannel(ViewOrigin, End, HintVisibilityChannel, Params);
+}
+
 void URockInteractorComponent::DrawInteractionPointDebug(const UWorld* World, const FVector& Location, float LookAtDotProduct) const
 {
 #if ENABLE_DRAW_DEBUG
@@ -544,8 +756,8 @@ void URockInteractorComponent::DrawInteractionPointDebug(const UWorld* World, co
 		FLinearColor(1.f, 0.f, 0.f),
 		T).ToFColor(true);
 
-	DrawDebugSphere(World, Location, 12.f, 8, Color, false, PrimaryComponentTick.TickInterval, 0, .25);
-	DrawDebugString(World, Location + FVector(0, 0, 20.f), FString::Printf(TEXT("%.2f"), Degrees), nullptr, Color, PrimaryComponentTick.TickInterval, true, 1.2);
+	DrawDebugSphere(World, Location, 12.f, 8, Color, false, PrimaryComponentTick.TickInterval, 0, .25f);
+	DrawDebugString(World, Location + FVector(0, 0, 20.f), FString::Printf(TEXT("%.2f"), Degrees), nullptr, Color, PrimaryComponentTick.TickInterval, true, 1.2f);
 #endif
 }
 
@@ -597,7 +809,7 @@ const FRockInteractionOptions& URockInteractorComponent::GetFocusedOptions() con
 void URockInteractorComponent::SetFocusedTarget(const TScriptInterface<IRockInteractableTarget>& NewTarget)
 {
 	// Unsub from old target
-	if (CurrentContext.Target)
+	if (::IsValid(CurrentContext.Target.GetObject()))
 	{
 		if (FSimpleMulticastDelegate* OldDelegate = CurrentContext.Target->GetInteractionStateChangedDelegate())
 		{
@@ -619,14 +831,26 @@ void URockInteractorComponent::SetFocusedTarget(const TScriptInterface<IRockInte
 
 void URockInteractorComponent::OnFocusedTargetStateChanged()
 {
-	if (!bHasFocus || !CurrentContext.Target)
+	if (!bHasFocus)
 	{
+		return;
+	}
+	if (!::IsValid(CurrentContext.Target.GetObject()))
+	{
+		ClearFocus();
 		return;
 	}
 
 	// Re-gather options, check if they actually changed
 	FRockInteractionOptions NewOptions;
 	CurrentContext.Target->GatherInteractionOptions(CurrentContext, NewOptions);
+
+	// Nothing left to offer: drop focus rather than keep a prompt with no options.
+	if (NewOptions.IsEmpty())
+	{
+		ClearFocus();
+		return;
+	}
 
 	if (NewOptions.AvailableOptions != CurrentOptions.AvailableOptions)
 	{
@@ -645,6 +869,7 @@ void URockInteractorComponent::ClearFocus()
 	CurrentOptions.Reset();
 
 	OnFocusChanged.Broadcast(CurrentContext);
+	OnOptionsChanged.Broadcast(CurrentOptions);
 }
 
 FRockInteractionQuery URockInteractorComponent::BuildQuery()
@@ -661,6 +886,12 @@ void URockInteractorComponent::TriggerInteraction(int32 OptionIndex)
 {
 	if (!bHasFocus)
 	{
+		return;
+	}
+
+	if (!::IsValid(CurrentContext.Target.GetObject()))
+	{
+		ClearFocus();
 		return;
 	}
 

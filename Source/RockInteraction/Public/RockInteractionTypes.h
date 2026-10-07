@@ -25,14 +25,28 @@ enum class ERockInteractorScanMode : uint8
 	DirectHitOnly, // skip sphere entirely, pure line trace
 };
 
-struct FRockInteractionCandidateEntry
+USTRUCT()
+struct ROCKINTERACTION_API FRockInteractionCandidateEntry
 {
+	GENERATED_BODY()
+
+	// Both are UPROPERTYs so GC sees them and nulls them once the object is gone; IsValid() also catches a target
+	// that was destroyed but not yet collected.
+	UPROPERTY()
 	TScriptInterface<IRockInteractableTarget> Target;
-	AActor* OwningActor = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<AActor> OwningActor = nullptr;
 
 	bool operator==(const FRockInteractionCandidateEntry& Other) const
 	{
 		return Target.GetObject() == Other.Target.GetObject();
+	}
+
+	/** True while the target object is alive (not null, not destroyed, not garbage). */
+	bool IsValid() const
+	{
+		return ::IsValid(Target.GetObject());
 	}
 };
 
@@ -87,12 +101,55 @@ struct ROCKINTERACTION_API FRockInteractionPoint
 	ERockInteractionPointRole Role = ERockInteractionPointRole::Interaction;
 };
 
-static_assert(sizeof(FRockInteractionPoint) == 64, "Check layout");
+static_assert(sizeof(FRockInteractionPoint) == 56 || sizeof(FRockInteractionPoint) == 64, "Check layout");
+
+/**
+ * One entry of the interactor's hint list: an Interaction-role point near the local player that a game can mark with a dot.
+ * Read through URockInteractorComponent::GetHintPoints(); the plugin draws nothing.
+ */
+USTRUCT(BlueprintType)
+struct ROCKINTERACTION_API FRockInteractionHintPoint
+{
+	GENERATED_BODY()
+
+	/** The point as gathered at the last hint refresh. PointTag identifies the verb, so a game can pick a colour or icon from it. */
+	UPROPERTY(BlueprintReadOnly)
+	FRockInteractionPoint Point;
+
+	/** The actor that owns the point's target. */
+	UPROPERTY(BlueprintReadOnly)
+	TWeakObjectPtr<AActor> OwningActor;
+
+	/** Distance from the interacting pawn to the point. */
+	UPROPERTY(BlueprintReadOnly)
+	float Distance = 0.f;
+
+	/** Angle between the view direction and the direction from the view to the point. The list is ordered by it. */
+	UPROPERTY(BlueprintReadOnly)
+	float AimAngleDegrees = 0.f;
+
+	/** True for the point that currently has interaction focus. Updated every scoring pass, not only at refresh. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bFocused = false;
+
+	/** False while a visibility trace from the view to the point is blocked, and until the first trace has run. Always true when tracing is off. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bVisible = false;
+
+	/** Same target actor, point tag, source component and socket. A moved point is still the same point. */
+	bool IsSamePoint(const FRockInteractionHintPoint& Other) const
+	{
+		return OwningActor == Other.OwningActor
+			&& Point.PointTag == Other.Point.PointTag
+			&& Point.SourceComponent == Other.Point.SourceComponent
+			&& Point.SocketName == Other.Point.SocketName;
+	}
+};
 
 // ----------------------------------------------------------------
 
 USTRUCT(BlueprintType)
-struct FRockInteractionQuery
+struct ROCKINTERACTION_API FRockInteractionQuery
 {
 	GENERATED_BODY()
 

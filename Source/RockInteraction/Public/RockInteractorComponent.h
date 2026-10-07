@@ -75,6 +75,45 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Scan")
 	bool bEnableCandidateExitEvents = true;
 
+	// --- Hints ---
+	// A short list of nearby interaction points a game can mark with dots. Local pawn only; needs the sphere scan (candidates).
+	// The plugin draws nothing: read GetHintPoints().
+
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints")
+	bool bEnableHints = false;
+
+	/** Points farther than this from the pawn are left out. 0 = ScanRange. Beyond ScanRange has no effect: only candidates are listed. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints", ClampMin="0.0"))
+	float HintRange = 0.f;
+
+	/** Seconds between rebuilds of the list (points gathered, culled, capped). 0 = every frame. Default 0.1 (10hz). */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints", ClampMin="0.0"))
+	float HintRefreshRate = 0.1f;
+
+	/** At most this many points are listed: the ones closest to the centre of the view. Also bounds the visibility traces. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints", ClampMin="1"))
+	int32 MaxHints = 8;
+
+	/** Points farther than this from the view direction (and everything behind the view) are left out. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints", ClampMin="1.0", ClampMax="180.0"))
+	float HintMaxAimDegrees = 70.f;
+
+	/** Trace from the view to each listed point and mark blocked ones not visible. Off: every listed point is visible. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints"))
+	bool bTraceHintVisibility = true;
+
+	/** At most this many visibility traces per scoring pass, taken round-robin over the list. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints && bTraceHintVisibility", ClampMin="1"))
+	int32 HintTracesPerPass = 2;
+
+	/** Collision channel of the visibility trace. Anything that blocks it hides the dots behind it. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints && bTraceHintVisibility"))
+	TEnumAsByte<ECollisionChannel> HintVisibilityChannel = ECC_Visibility;
+
+	/** The trace stops this far short of the point, so the surface a socket sits on does not hide its own point. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints && bTraceHintVisibility", ClampMin="0.0"))
+	float HintVisibilityTolerance = 20.f;
+
 
 	// --- Delegates ---
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFocusChanged, const FRockInteractionContext&, Context);
@@ -102,6 +141,13 @@ public:
 	const FRockInteractionContext& GetFocusedContext() const;
 	UFUNCTION(BlueprintCallable)
 	const FRockInteractionOptions& GetFocusedOptions() const;
+
+	/**
+	 * Interaction points near the pawn, closest to the centre of the view first, at most MaxHints. Empty unless bEnableHints and the
+	 * pawn is locally controlled. The reference is invalidated by the next tick: copy what you need.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Interaction|Hints")
+	const TArray<FRockInteractionHintPoint>& GetHintPoints() const { return HintPoints; }
 
 	// --- Actions ---
 	// Called by input binding or GA_Interact
@@ -135,6 +181,16 @@ protected:
 	virtual FRockInteractionQuery BuildQuery();
 
 	void TickLineTrace();
+
+	/** Runs from the primary tick after scoring: rebuilds the hint list at HintRefreshRate, refreshes the focused flag, runs the trace budget. */
+	void TickHints();
+	/** Gathers points from the candidates, culls by range and aim, keeps the MaxHints closest to the view centre. Carries visibility over for points that stay. */
+	void RefreshHintList();
+	void UpdateHintFocusFlags();
+	void TraceHintVisibility();
+	/** Visibility trace seam. True when the point can be seen from ViewOrigin. Override to stub in tests. */
+	virtual bool IsHintPointVisible(const FVector& ViewOrigin, const FRockInteractionHintPoint& Hint) const;
+
 	bool TryResolveDirectHit(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
 	bool ResolvePointsFromTarget(const TScriptInterface<IRockInteractableTarget>& Candidate, const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
 	bool ScoreCandidatesByLookAt(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;
@@ -146,10 +202,23 @@ private:
 protected:
 	// Candidate list from sphere overlap
 	// If you consistently go over 10 candidate targets, consider switching to TSet instead?
+	// UPROPERTYs so GC nulls entries whose target is gone; entries destroyed but not yet collected are dropped by PruneInvalidCandidates.
+	UPROPERTY(Transient)
 	TArray<FRockInteractionCandidateEntry> Candidates;
+	UPROPERTY(Transient)
 	TArray<FRockInteractionCandidateEntry> PersistentCandidates;
+
+	/** Drops candidates and persistent candidates whose target was destroyed, and clears focus if the focused target is gone. */
+	void PruneInvalidCandidates();
+	UPROPERTY(Transient)
+	TArray<FRockInteractionHintPoint> HintPoints;
+
 private:
+	double NextHintRefreshTime = 0.0;
+	int32 HintTraceCursor = 0;
+
 	// Result of scoring
+	UPROPERTY(Transient)
 	FRockInteractionContext CurrentContext;
 	FRockInteractionOptions CurrentOptions;
 	bool bHasFocus = false;
