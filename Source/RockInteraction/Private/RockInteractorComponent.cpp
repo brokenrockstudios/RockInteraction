@@ -55,25 +55,29 @@ void URockInteractorComponent::BeginPlay()
 	SecondaryTickFunction.Target = this;
 	SecondaryTickFunction.RegisterTickFunction(GetComponentLevel());
 
+	ScanRangeSquared = ScanRange * ScanRange;
+
 	APawn* Pawn = Cast<APawn>(GetOwner());
 	if (!Pawn) return;
+
+	// Stays bound for the pawn's life: possession can change any number of times (death, vehicles).
+	Pawn->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &ThisClass::OnControllerChanged);
 	if (Pawn->GetController())
+	{
+		StartScans();
+	}
+}
+
+void URockInteractorComponent::OnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController)
+{
+	if (NewController)
 	{
 		StartScans();
 	}
 	else
 	{
-		// Sometimes our pawn gets spawned before it has a controller, so let's just wait until we have one.
-		Pawn->ReceiveControllerChangedDelegate.AddDynamic(this, &ThisClass::OnControllerChanged);
+		StopScans();
 	}
-
-	ScanRangeSquared = ScanRange * ScanRange;
-}
-
-void URockInteractorComponent::OnControllerChanged(APawn* Pawn, AController* OldController, AController* NewController)
-{
-	StartScans();
-	Pawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &ThisClass::OnControllerChanged);
 }
 
 void URockInteractorComponent::StartScans()
@@ -93,6 +97,50 @@ void URockInteractorComponent::StartScans()
 	{
 		SecondaryTickFunction.SetTickFunctionEnable(true);
 		SphereScanDelegate.BindUObject(this, &URockInteractorComponent::OnScanComplete);
+	}
+}
+
+void URockInteractorComponent::StopScans()
+{
+	bLineTraceScanActive = false;
+	bSphereScanActive = false;
+	SetComponentTickEnabled(false);
+	SecondaryTickFunction.SetTickFunctionEnable(false);
+	SphereScanDelegate.Unbind();
+	// A scan still in flight is stale now: OnScanComplete drops results whose handle is not the pending one.
+	PendingSphereScanHandle = FTraceHandle();
+
+	ClearFocus();
+	HintPoints.Reset();
+
+	// Nothing is in reach of a pawn nobody controls: let the game revoke what it granted for the candidates.
+	// Persistent candidates stay registered and are picked up again by the first scan after re-possession.
+	TArray<FRockInteractionCandidateEntry> Gone = MoveTemp(Candidates);
+	Candidates.Reset();
+	if (bEnableCandidateExitEvents)
+	{
+		for (const FRockInteractionCandidateEntry& Entry : Gone)
+		{
+			if (Entry.Target.GetObject()) { OnCandidateExited(Entry.Target); }
+		}
+	}
+	if (!Gone.IsEmpty())
+	{
+		OnCandidatesUpdated(Candidates);
+	}
+}
+
+void URockInteractorComponent::SetInteractionSuppressed(FName Reason, bool bSuppressed)
+{
+	if (bSuppressed)
+	{
+		SuppressReasons.Add(Reason);
+		ClearFocus();
+		HintPoints.Reset();
+	}
+	else
+	{
+		SuppressReasons.Remove(Reason);
 	}
 }
 
@@ -298,6 +346,12 @@ void URockInteractorComponent::OnCandidatesUpdated(const TArray<FRockInteraction
 void URockInteractorComponent::TickLineTrace()
 {
 	SCOPE_CYCLE_COUNTER(STAT_RockInteraction_ScoreAndSelect);
+
+	if (IsInteractionSuppressed())
+	{
+		ClearFocus();
+		return;
+	}
 
 	// A target destroyed since the last pass (a picked-up world item) must not be scored or stay focused.
 	PruneInvalidCandidates();
@@ -608,7 +662,7 @@ void URockInteractorComponent::ResolveVisibilityProxy(
 
 void URockInteractorComponent::TickHints()
 {
-	if (!bEnableHints)
+	if (!bEnableHints || IsInteractionSuppressed())
 	{
 		HintPoints.Reset();
 		return;

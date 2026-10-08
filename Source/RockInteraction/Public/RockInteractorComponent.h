@@ -157,6 +157,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interaction|Hints")
 	const TArray<FRockInteractionHintPoint>& GetHintPoints() const { return HintPoints; }
 
+	/**
+	 * Pauses interaction for a reason (menu, cutscene, busy): focus is cleared and no target is focused and no hints are listed
+	 * while any reason is set. Candidates keep updating. Reasons are independent; each needs its own clear.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetInteractionSuppressed(FName Reason, bool bSuppressed);
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	bool IsInteractionSuppressed() const { return !SuppressReasons.IsEmpty(); }
+
+	/** True while the pawn has a controller and a scan is running (line trace scoring on the local pawn, sphere scan on local or authority). */
+	bool IsScanning() const { return bLineTraceScanActive || bSphereScanActive; }
+
 	// --- Actions ---
 	// Called by input binding or GA_Interact
 	UFUNCTION(BlueprintCallable)
@@ -176,6 +189,8 @@ protected:
 	URockInteractorComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	void StartScans();
+	/** Unpossessed: stop ticking, drop focus, hints and candidates (exit events fire). */
+	void StopScans();
 	void TickSphereScan();
 
 	void OnScanComplete(const FTraceHandle& Handle, FOverlapDatum& Datum);
@@ -239,6 +254,7 @@ private:
 	bool bSphereScanActive = false;
 	bool bLineTraceScanActive = false;
 	float ScanRangeSquared = 0;
+	TSet<FName> SuppressReasons;
 	
 	UPROPERTY()
 	FRockInteractorSecondaryTick SecondaryTickFunction;

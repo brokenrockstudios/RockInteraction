@@ -1,5 +1,10 @@
 # Changelog
 
+## 2610.0802
+- Feature: scanning lifecycle: the controller-changed binding now lives for the pawn's life; unpossess stops both scans, clears focus and hints and drops the candidates (exit events fire), re-possess restarts them; `IsScanning()` (T-115).
+- Feature: `SetInteractionSuppressed(Reason, bool)` / `IsInteractionSuppressed()`: while any reason is set, focus is cleared, nothing is focused and no hints are listed; candidates keep updating (T-115).
+- Tests: `Interactor.Lifecycle.*` (+8). `GainingAController_StopsListeningForOne` and `BeginPlay_WithAController_DoesNotWaitForOne` asserted the old one-shot binding and were replaced by `GainingAController_KeepsListeningForChanges` and `BeginPlay_WithAController_StartsScanningAndListens`.
+
 ## 2610.0801
 - Feature: look-at focus needs line of sight (`bFocusRequiresLineOfSight`, `FocusLineOfSightTraces`): the best-aimed point is traced from the camera through `IsHintPointVisible` and, if blocked, gives way to the next best, up to 3 traces per pass; direct hits are unchanged (T-113).
 - Tests: `Interactor.LookAt.LineOfSight.*` (7).

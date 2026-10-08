@@ -424,7 +424,8 @@ TEST_CLASS(RockInteractorLifecycleTests, "BRS.RockInteraction.Interactor.Lifecyc
 		ASSERT_THAT(IsTrue(Pawn.ReceiveControllerChangedDelegate.IsBound()));
 	}
 
-	TEST_METHOD(GainingAController_StopsListeningForOne)
+	/** T-115: the binding stays for the pawn's life so unpossess and re-possess are seen. */
+	TEST_METHOD(GainingAController_KeepsListeningForChanges)
 	{
 		APawn& Pawn = Fixture.SpawnPawn();
 		URockTestInteractorComponent& Interactor = Fixture.AddInteractor(Pawn);
@@ -432,10 +433,11 @@ TEST_CLASS(RockInteractorLifecycleTests, "BRS.RockInteraction.Interactor.Lifecyc
 
 		Fixture.Possess(Pawn);
 
-		ASSERT_THAT(IsFalse(Pawn.ReceiveControllerChangedDelegate.IsBound()));
+		ASSERT_THAT(IsTrue(Pawn.ReceiveControllerChangedDelegate.IsBound()));
+		ASSERT_THAT(IsTrue(Interactor.IsScanning()));
 	}
 
-	TEST_METHOD(BeginPlay_WithAController_DoesNotWaitForOne)
+	TEST_METHOD(BeginPlay_WithAController_StartsScanningAndListens)
 	{
 		APawn& Pawn = Fixture.SpawnPawn();
 		URockTestInteractorComponent& Interactor = Fixture.AddInteractor(Pawn);
@@ -443,7 +445,122 @@ TEST_CLASS(RockInteractorLifecycleTests, "BRS.RockInteraction.Interactor.Lifecyc
 
 		FRockInteractionFixture::BeginPlay(Pawn);
 
-		ASSERT_THAT(IsFalse(Pawn.ReceiveControllerChangedDelegate.IsBound()));
+		ASSERT_THAT(IsTrue(Pawn.ReceiveControllerChangedDelegate.IsBound()));
+		ASSERT_THAT(IsTrue(Interactor.IsScanning()));
+	}
+
+	TEST_METHOD(Unpossess_StopsScanningAndClearsFocusHintsAndCandidates)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+		Interactor.bEnableHints = true;
+		Interactor.bTraceHintVisibility = false;
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Ahead(0));
+		Target.Options.Add(FRockInteractionFixture::MakeOption(RockInteractionTestTags::OptionA));
+		Target.Points.Add(FRockInteractionFixture::MakePoint(Ahead(0), RockInteractionTestTags::PointA));
+		Interactor.Overlap({&Target});
+		Interactor.ScorePass();
+		Interactor.HintPass();
+		ASSERT_THAT(IsTrue(Interactor.HasFocus()));
+		ASSERT_THAT(IsFalse(Interactor.GetHintPoints().IsEmpty()));
+
+		Pawn->GetController()->UnPossess();
+
+		ASSERT_THAT(IsFalse(Interactor.IsScanning()));
+		ASSERT_THAT(IsFalse(Interactor.HasFocus()));
+		ASSERT_THAT(IsTrue(Interactor.GetHintPoints().IsEmpty()));
+		ASSERT_THAT(AreEqual(0, Interactor.NumCandidates()));
+		ASSERT_THAT(AreEqual(1, Interactor.Exited.Num()));
+	}
+
+	TEST_METHOD(Repossess_StartsScanningAgain)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+		Pawn->GetController()->UnPossess();
+		ASSERT_THAT(IsFalse(Interactor.IsScanning()));
+
+		Fixture.Possess(*Pawn);
+
+		ASSERT_THAT(IsTrue(Interactor.IsScanning()));
+	}
+
+	TEST_METHOD(Unpossess_KeepsPersistentCandidatesRegistered)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Ahead(0));
+		FRockInteractionCandidateEntry Entry;
+		Entry.Target = FRockInteractionFixture::AsTarget(Target);
+		Entry.OwningActor = &Target;
+		Interactor.AddPersistentCandidate(Entry);
+
+		Pawn->GetController()->UnPossess();
+
+		ASSERT_THAT(AreEqual(1, Interactor.NumPersistentCandidates()));
+	}
+
+	TEST_METHOD(Suppressed_ClearsFocusAndHintsAndBlocksNewFocus)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+		Interactor.bEnableHints = true;
+		Interactor.bTraceHintVisibility = false;
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Ahead(0));
+		Target.Options.Add(FRockInteractionFixture::MakeOption(RockInteractionTestTags::OptionA));
+		Target.Points.Add(FRockInteractionFixture::MakePoint(Ahead(0), RockInteractionTestTags::PointA));
+		Interactor.Overlap({&Target});
+		Interactor.ScorePass();
+		Interactor.HintPass();
+		ASSERT_THAT(IsTrue(Interactor.HasFocus()));
+
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), true);
+		ASSERT_THAT(IsFalse(Interactor.HasFocus()));
+		ASSERT_THAT(IsTrue(Interactor.GetHintPoints().IsEmpty()));
+
+		Interactor.ScorePass();
+		Interactor.RefreshHints();
+		Interactor.HintPass();
+		ASSERT_THAT(IsFalse(Interactor.HasFocus()));
+		ASSERT_THAT(IsTrue(Interactor.GetHintPoints().IsEmpty()));
+
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), false);
+		Interactor.ScorePass();
+		ASSERT_THAT(IsTrue(Interactor.HasFocus()));
+	}
+
+	TEST_METHOD(Suppressed_TriggerDoesNothing)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+		URockTestInteractorListener* Listener = Fixture.MakeObject<URockTestInteractorListener>();
+		Listener->Bind(Interactor);
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Ahead(0));
+		Target.Options.Add(FRockInteractionFixture::MakeOption(RockInteractionTestTags::OptionA));
+		Interactor.Overlap({&Target});
+		Interactor.ScorePass();
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), true);
+
+		Interactor.TriggerInteraction(0);
+
+		ASSERT_THAT(AreEqual(0, Listener->Triggered));
+	}
+
+	TEST_METHOD(OverlappingReasons_StaySuppressedUntilAllAreCleared)
+	{
+		APawn* Pawn = nullptr;
+		URockTestInteractorComponent& Interactor = Fixture.SpawnReadyInteractor(Pawn);
+
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), true);
+		Interactor.SetInteractionSuppressed(TEXT("Cutscene"), true);
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), true); // same reason twice is still one reason
+		ASSERT_THAT(IsTrue(Interactor.IsInteractionSuppressed()));
+
+		Interactor.SetInteractionSuppressed(TEXT("Menu"), false);
+		ASSERT_THAT(IsTrue(Interactor.IsInteractionSuppressed()));
+
+		Interactor.SetInteractionSuppressed(TEXT("Cutscene"), false);
+		ASSERT_THAT(IsFalse(Interactor.IsInteractionSuppressed()));
 	}
 
 	TEST_METHOD(BeginPlay_CopiesTheScanRatesToTheTickIntervals)
