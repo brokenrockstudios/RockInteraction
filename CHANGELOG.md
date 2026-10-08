@@ -1,5 +1,9 @@
 # Changelog
 
+## 2610.0801
+- Feature: look-at focus needs line of sight (`bFocusRequiresLineOfSight`, `FocusLineOfSightTraces`): the best-aimed point is traced from the camera through `IsHintPointVisible` and, if blocked, gives way to the next best, up to 3 traces per pass; direct hits are unchanged (T-113).
+- Tests: `Interactor.LookAt.LineOfSight.*` (7).
+
 ## 2610.0602
 - Feature: hint list on `URockInteractorComponent` (`bEnableHints`, `HintRange`, `HintRefreshRate`, `MaxHints`, `HintMaxAimDegrees`, `GetHintPoints()`, `FRockInteractionHintPoint`): Interaction points of candidates in range, the closest to the view centre first and capped, focused point flagged, local pawn only; off by default (T-111).
 - Feature: per-point visibility from a round-robin trace (`bTraceHintVisibility`, `HintTracesPerPass`, `HintVisibilityChannel`, `HintVisibilityTolerance`) behind the virtual `IsHintPointVisible` (T-111).

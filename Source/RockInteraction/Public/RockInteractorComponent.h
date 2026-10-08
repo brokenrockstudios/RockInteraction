@@ -114,6 +114,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Hints", meta=(EditCondition="bEnableHints && bTraceHintVisibility", ClampMin="0.0"))
 	float HintVisibilityTolerance = 20.f;
 
+	/** A look-at winner needs a clear view from the camera to its point (same trace as the hint dots) before it takes focus. Direct hits already have it. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Focus")
+	bool bFocusRequiresLineOfSight = true;
+
+	/** At most this many look-at candidates are traced per scoring pass, best aim first. If all are blocked nothing is focused this pass. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Focus", meta=(EditCondition="bFocusRequiresLineOfSight", ClampMin="1"))
+	int32 FocusLineOfSightTraces = 3;
+
 
 	// --- Delegates ---
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFocusChanged, const FRockInteractionContext&, Context);
@@ -188,7 +196,7 @@ protected:
 	void RefreshHintList();
 	void UpdateHintFocusFlags();
 	void TraceHintVisibility();
-	/** Visibility trace seam. True when the point can be seen from ViewOrigin. Override to stub in tests. */
+	/** Visibility trace seam, used by the hint dots and by look-at focus. True when the point can be seen from ViewOrigin. Override to stub in tests. */
 	virtual bool IsHintPointVisible(const FVector& ViewOrigin, const FRockInteractionHintPoint& Hint) const;
 
 	bool TryResolveDirectHit(const FInteractionScanContext& ScanCtx, const FRockInteractionQuery& Query, TScriptInterface<IRockInteractableTarget>& OutTarget, FRockInteractionPoint& OutPoint) const;

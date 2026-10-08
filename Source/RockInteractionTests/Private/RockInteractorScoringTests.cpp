@@ -657,4 +657,119 @@ TEST_CLASS(RockInteractorVisibilityProxyTests, "BRS.RockInteraction.Interactor.V
 	}
 };
 
+// Line of sight for LookAt focus (T-113). The trace is the virtual IsHintPointVisible, stubbed by BlockedLocations.
+TEST_CLASS(RockInteractorLineOfSightTests, "BRS.RockInteraction.Interactor.LookAt.LineOfSight")
+{
+	FRockInteractionFixture Fixture;
+	APawn* Pawn = nullptr;
+	URockTestInteractorComponent* Interactor = nullptr;
+	TScriptInterface<IRockInteractableTarget> Result;
+	FRockInteractionPoint ResultPoint;
+
+	BEFORE_EACH()
+	{
+		Interactor = &Fixture.SpawnReadyInteractor(Pawn);
+	}
+
+	ARockTestInteractable& Candidate(const FVector& Location)
+	{
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Location);
+		FRockInteractionCandidateEntry Entry;
+		Entry.Target = FRockInteractionFixture::AsTarget(Target);
+		Entry.OwningActor = &Target;
+		Interactor->AddPersistentCandidate(Entry);
+		Interactor->Overlap({});
+		return Target;
+	}
+
+	bool Run()
+	{
+		return Interactor->LookAt(FRockInteractionFixture::MakeScan(), Result, ResultPoint);
+	}
+
+	TEST_METHOD(BlockedWinner_IsNotSelected)
+	{
+		ARockTestInteractable& Target = Candidate(Ahead(0));
+		Interactor->BlockedLocations = {Target.GetActorLocation()};
+
+		ASSERT_THAT(IsFalse(Run()));
+		ASSERT_THAT(IsNull(Result.GetObject()));
+	}
+
+	TEST_METHOD(BlockedWinner_GivesWayToTheNextBest)
+	{
+		ARockTestInteractable& Blocked = Candidate(Ahead(0.5));
+		ARockTestInteractable& Open = Candidate(Ahead(2));
+		Interactor->BlockedLocations = {Blocked.GetActorLocation()};
+
+		ASSERT_THAT(IsTrue(Run()));
+		ASSERT_THAT(IsTrue(Result.GetObject() == &Open));
+	}
+
+	TEST_METHOD(VisibleWinner_CostsOneTrace)
+	{
+		Candidate(Ahead(0.5));
+		Candidate(Ahead(2));
+
+		ASSERT_THAT(IsTrue(Run()));
+		ASSERT_THAT(AreEqual(1, Interactor->VisibilityTraceCalls));
+	}
+
+	TEST_METHOD(Traces_AreCappedPerPass)
+	{
+		Interactor->FocusLineOfSightTraces = 2;
+		for (double Angle : {0.2, 0.4, 0.6, 0.8})
+		{
+			ARockTestInteractable& Target = Candidate(Ahead(Angle));
+			Interactor->BlockedLocations.Add(Target.GetActorLocation());
+		}
+		// A fifth, open candidate is further from the centre than the traced ones.
+		Candidate(Ahead(2));
+
+		ASSERT_THAT(IsFalse(Run()));
+		ASSERT_THAT(AreEqual(2, Interactor->VisibilityTraceCalls));
+	}
+
+	TEST_METHOD(Disabled_SelectsABlockedWinnerWithoutTracing)
+	{
+		Interactor->bFocusRequiresLineOfSight = false;
+		ARockTestInteractable& Target = Candidate(Ahead(0));
+		Interactor->BlockedLocations = {Target.GetActorLocation()};
+
+		ASSERT_THAT(IsTrue(Run()));
+		ASSERT_THAT(IsTrue(Result.GetObject() == &Target));
+		ASSERT_THAT(AreEqual(0, Interactor->VisibilityTraceCalls));
+	}
+
+	TEST_METHOD(OnlyThePointTraced_NotItsSiblings)
+	{
+		ARockTestInteractable& Target = Fixture.SpawnInteractable(Ahead(0));
+		Target.Points = {
+			FRockInteractionFixture::MakePoint(Ahead(0.5), RockInteractionTestTags::PointA),
+			FRockInteractionFixture::MakePoint(Ahead(1.5), RockInteractionTestTags::PointB),
+		};
+		FRockInteractionCandidateEntry Entry;
+		Entry.Target = FRockInteractionFixture::AsTarget(Target);
+		Entry.OwningActor = &Target;
+		Interactor->AddPersistentCandidate(Entry);
+		Interactor->Overlap({});
+		Interactor->BlockedLocations = {Ahead(0.5)};
+
+		ASSERT_THAT(IsTrue(Run()));
+		ASSERT_THAT(IsTrue(ResultPoint.WorldLocation.Equals(Ahead(1.5))));
+	}
+
+	/** The whole pass: a blocked winner does not take focus. */
+	TEST_METHOD(ScorePass_BlockedWinner_DoesNotFocus)
+	{
+		ARockTestInteractable& Target = Candidate(Ahead(0));
+		Target.Options = {FRockInteractionFixture::MakeOption(RockInteractionTestTags::OptionA)};
+		Interactor->BlockedLocations = {Target.GetActorLocation()};
+
+		Interactor->ScorePass();
+
+		ASSERT_THAT(IsFalse(Interactor->HasFocus()));
+	}
+};
+
 #endif // WITH_DEV_AUTOMATION_TESTS

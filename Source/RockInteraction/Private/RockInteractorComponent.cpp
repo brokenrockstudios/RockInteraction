@@ -488,7 +488,14 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 	TScriptInterface<IRockInteractableTarget>& OutTarget,
 	FRockInteractionPoint& OutPoint) const
 {
-	float BestScore = -FLT_MAX;
+	// Every point inside its look-at cone, with its score.
+	struct FScored
+	{
+		TScriptInterface<IRockInteractableTarget> Target;
+		FRockInteractionPoint Point;
+		float Dot = 0.f;
+	};
+	TArray<FScored> Scored;
 	TArray<FRockInteractionPoint> Points;
 
 	for (const auto& CandidateEntry : Candidates)
@@ -507,15 +514,14 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 			if (!IsValid(CandidateEntry.OwningActor)) { continue; }
 			const FVector ToActor = (CandidateEntry.OwningActor->GetActorLocation() - ScanCtx.ViewOrigin).GetSafeNormal();
 			const float Dot = FVector::DotProduct(ScanCtx.ViewDirection, ToActor);
-			if (Dot > ScanCtx.LookAtThresholdCos && Dot > BestScore)
+			if (Dot > ScanCtx.LookAtThresholdCos)
 			{
-				BestScore = Dot;
-				OutTarget = CandidateEntry.Target;
-				FRockInteractionPoint Fallback;
-				Fallback.WorldLocation = CandidateEntry.OwningActor->GetActorLocation();
-				Fallback.SourceComponent = CandidateEntry.OwningActor->GetRootComponent();
-				Fallback.Role = ERockInteractionPointRole::Interaction;
-				OutPoint = Fallback;
+				FScored& Entry = Scored.AddDefaulted_GetRef();
+				Entry.Target = CandidateEntry.Target;
+				Entry.Dot = Dot;
+				Entry.Point.WorldLocation = CandidateEntry.OwningActor->GetActorLocation();
+				Entry.Point.SourceComponent = CandidateEntry.OwningActor->GetRootComponent();
+				Entry.Point.Role = ERockInteractionPointRole::Interaction;
 			}
 		}
 		else
@@ -525,8 +531,6 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 			{
 				if (FVector::DistSquared(ActorLocation, Point.WorldLocation) > ScanRangeSquared)
 				{
-					// Just distance check for now. But later on, this might be a worthwhile place to do a 'visibility check'?
-					// Otherwise 
 					continue;
 				}
 				const FVector ToPoint = (Point.WorldLocation - ScanCtx.ViewOrigin).GetSafeNormal();
@@ -535,17 +539,45 @@ bool URockInteractorComponent::ScoreCandidatesByLookAt(
 				const float EffectiveThresholdCos = Point.LookAtThresholdScale == 1.f
 					? ScanCtx.LookAtThresholdCos
 					: FMath::Cos(FMath::DegreesToRadians(LookAtThresholdDegrees * Point.LookAtThresholdScale));
-				if (Dot > EffectiveThresholdCos && Dot > BestScore)
+				if (Dot > EffectiveThresholdCos)
 				{
-					BestScore = Dot;
-					OutTarget = CandidateEntry.Target;
-					OutPoint = Point;
+					FScored& Entry = Scored.AddDefaulted_GetRef();
+					Entry.Target = CandidateEntry.Target;
+					Entry.Point = Point;
+					Entry.Dot = Dot;
 				}
 			}
 		}
 	}
 
-	return OutTarget.GetObject() != nullptr;
+	// Best score first (the first of an exact tie wins). With line of sight on, a blocked winner gives way to the next best,
+	// up to FocusLineOfSightTraces traces; the pass finds nothing if all of those are blocked.
+	const int32 MaxAttempts = bFocusRequiresLineOfSight ? FMath::Max(FocusLineOfSightTraces, 1) : 1;
+	for (int32 Attempt = 0; Attempt < MaxAttempts && !Scored.IsEmpty(); ++Attempt)
+	{
+		int32 BestIndex = 0;
+		for (int32 Index = 1; Index < Scored.Num(); ++Index)
+		{
+			if (Scored[Index].Dot > Scored[BestIndex].Dot) { BestIndex = Index; }
+		}
+
+		if (bFocusRequiresLineOfSight)
+		{
+			FRockInteractionHintPoint Probe;
+			Probe.Point = Scored[BestIndex].Point;
+			if (!IsHintPointVisible(ScanCtx.ViewOrigin, Probe))
+			{
+				Scored.RemoveAt(BestIndex, EAllowShrinking::No);
+				continue;
+			}
+		}
+
+		OutTarget = Scored[BestIndex].Target;
+		OutPoint = Scored[BestIndex].Point;
+		return true;
+	}
+
+	return false;
 }
 
 void URockInteractorComponent::ResolveVisibilityProxy(
