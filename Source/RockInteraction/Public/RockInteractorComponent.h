@@ -75,6 +75,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Scan")
 	bool bEnableCandidateExitEvents = true;
 
+	/**
+	 * Extra distance past ScanRange that IsInReach still accepts. The candidate list is rebuilt at SphereScanRate, so a pawn that has
+	 * just stepped away (or a client whose view is a few frames old) is still a legitimate caller.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Reach", meta=(ClampMin="0.0"))
+	float ReachSlack = 100.f;
+
 	// --- Hints ---
 	// A short list of nearby interaction points a game can mark with dots. Local pawn only; needs the sphere scan (candidates).
 	// The plugin draws nothing: read GetHintPoints().
@@ -166,6 +173,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	bool IsInteractionSuppressed() const { return !SuppressReasons.IsEmpty(); }
+
+	/**
+	 * Authority check for a triggered interaction: true when Target is a current candidate (sphere scan, or persistent) and the pawn is
+	 * within ScanRange + ReachSlack of its bounds. Persistent candidates skip the distance part. Needs the candidate list, so it works
+	 * where the sphere scan runs (the owning client and the authority); it does not need focus.
+	 */
+	bool IsInReach(const UObject* Target) const;
 
 	/** True while the pawn has a controller and a scan is running (line trace scoring on the local pawn, sphere scan on local or authority). */
 	bool IsScanning() const { return bLineTraceScanActive || bSphereScanActive; }

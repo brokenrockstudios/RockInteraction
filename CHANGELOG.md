@@ -1,5 +1,13 @@
 # Changelog
 
+## 2610.0901
+
+- Tests module is `UncookedOnly` instead of `DeveloperTool`, so the staged game target no longer links it (T-220).
+
+## 2610.0803
+- Feature: `IsInReach(Target)` and `ReachSlack`: true when the target is a current candidate (or a persistent one) and the pawn is within `ScanRange + ReachSlack` of its bounds; the authority's check of a triggered interaction, no focus needed (T-117).
+- Tests: `Interactor.Reach.*` (9).
+
 ## 2610.0802
 - Feature: scanning lifecycle: the controller-changed binding now lives for the pawn's life; unpossess stops both scans, clears focus and hints and drops the candidates (exit events fire), re-possess restarts them; `IsScanning()` (T-115).
 - Feature: `SetInteractionSuppressed(Reason, bool)` / `IsInteractionSuppressed()`: while any reason is set, focus is cleared, nothing is focused and no hints are listed; candidates keep updating (T-115).

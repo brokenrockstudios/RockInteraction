@@ -21,7 +21,7 @@
 		},
 		{
 			"Name": "RockInteractionTests",
-			"Type": "DeveloperTool",
+			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
 		}
 	],

@@ -199,6 +199,33 @@ void URockInteractorComponent::PruneInvalidCandidates()
 	}
 }
 
+bool URockInteractorComponent::IsInReach(const UObject* Target) const
+{
+	if (!::IsValid(Target)) { return false; }
+
+	for (const FRockInteractionCandidateEntry& Entry : PersistentCandidates)
+	{
+		if (Entry.IsValid() && Entry.Target.GetObject() == Target) { return true; }
+	}
+
+	for (const FRockInteractionCandidateEntry& Entry : Candidates)
+	{
+		if (!Entry.IsValid() || Entry.Target.GetObject() != Target) { continue; }
+
+		const AActor* Owner = GetOwner();
+		const AActor* TargetActor = Entry.OwningActor ? Entry.OwningActor.Get() : Cast<AActor>(Target);
+		if (!Owner || !TargetActor) { return false; }
+
+		const float MaxDistance = ScanRange + ReachSlack;
+		const FBox Bounds = TargetActor->GetComponentsBoundingBox();
+		const float DistSquared = Bounds.IsValid ? Bounds.ComputeSquaredDistanceToPoint(Owner->GetActorLocation())
+		                                         : FVector::DistSquared(Owner->GetActorLocation(), TargetActor->GetActorLocation());
+		return DistSquared <= FMath::Square(MaxDistance);
+	}
+
+	return false;
+}
+
 void URockInteractorComponent::AddPersistentCandidate(const FRockInteractionCandidateEntry& CandidateEntry)
 {
 	if (CandidateEntry.Target)
